@@ -7,217 +7,177 @@
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
   :root {
-    --bg:        #F4F3F0;
-    --surface:   #FFFFFF;
-    --surface-2: #FAF9F7;
-    --border:    #E4E1DB;
-    --text:      #23262A;
-    --muted:     #767B82;
-    --faint:     #9BA0A6;
-    --accent:    #45688E;
-    --accent-bg: #ECF1F6;
-    --good:      #5D9078;
-    --good-bg:   #EDF3F0;
-    --warn:      #C79553;
-    --over:      #B8676C;
-    --over-bg:   #F7EDED;
-    --r:         12px;
+    --bg:#F4F3F0; --surface:#FFFFFF; --surface-2:#FAF9F7; --border:#E4E1DB;
+    --text:#23262A; --muted:#767B82; --faint:#9BA0A6;
+    --accent:#45688E; --accent-bg:#ECF1F6;
+    --good:#5D9078; --good-bg:#EDF3F0; --warn:#C79553;
+    --over:#B8676C; --over-bg:#F7EDED; --r:12px;
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
-    -webkit-font-smoothing: antialiased; font-size: 15px; line-height: 1.45;
-  }
-  #app { max-width: 500px; margin: 0 auto; min-height: 100vh; padding-bottom: 76px; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font-size:15px; line-height:1.45;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif; -webkit-font-smoothing:antialiased; }
+  #app { max-width:500px; margin:0 auto; min-height:100vh; padding-bottom:76px; }
 
-  header {
-    background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 16px 18px 13px; display: flex; align-items: center; justify-content: space-between;
-    position: sticky; top: 0; z-index: 20;
-  }
-  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
-  header .sub { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
-  .sync-btn {
-    border: 1px solid var(--border); background: var(--surface-2); color: var(--accent);
-    font-size: 13px; font-weight: 500; padding: 7px 12px; border-radius: 8px; cursor: pointer;
-  }
-  .sync-btn:active { background: var(--accent-bg); }
-  .sync-btn[disabled] { color: var(--faint); }
+  header { background:var(--surface); border-bottom:1px solid var(--border); padding:12px 18px;
+    display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:20; }
+  header .sub { font-size:13.5px; color:var(--muted); font-weight:500; }
+  .sync-btn { border:1px solid var(--border); background:var(--surface-2); color:var(--accent);
+    font-size:13px; font-weight:500; padding:7px 12px; border-radius:8px; cursor:pointer; font-family:inherit; }
+  .sync-btn:active { background:var(--accent-bg); }
+  .sync-btn[disabled] { color:var(--faint); }
 
-  .view { display: none; padding: 12px 14px 4px; }
-  .view.active { display: block; }
+  .view { display:none; padding:12px 14px 4px; }
+  .view.active { display:block; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px; margin-bottom:10px; }
+  .card.tight { padding:10px 14px; }
+  .section-label { font-size:12.5px; color:var(--muted); margin:14px 2px 7px; font-weight:500;
+    display:flex; justify-content:space-between; align-items:center; }
+  .section-label a { color:var(--accent); cursor:pointer; font-weight:500; }
 
-  .card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--r); padding: 14px; margin-bottom: 10px;
-  }
-  .card.tight { padding: 10px 14px; }
-  .section-label { font-size: 12.5px; color: var(--muted); margin: 14px 2px 7px; font-weight: 500; }
+  /* month picker */
+  .months { display:flex; gap:6px; overflow-x:auto; padding:2px 0 8px; scrollbar-width:none; }
+  .months::-webkit-scrollbar { display:none; }
+  .mpill { flex:none; font-size:12.5px; padding:6px 12px; border-radius:8px; cursor:pointer;
+    border:1px solid var(--border); background:var(--surface); color:var(--muted); white-space:nowrap; }
+  .mpill.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:500; }
 
-  /* ---- categorize ---- */
-  .txn-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-  .txn-payee { font-size: 15px; font-weight: 550; letter-spacing: -0.005em; }
-  .txn-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .txn-amt { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .txn-amt.in { color: var(--good); }
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
-  .chip {
-    font-size: 12.5px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-  }
-  .chip.excl { color: var(--muted); font-style: italic; }
-  .chip.save { background: var(--good-bg); border-color: #D3E2DA; color: #3F6B57; }
-  .chip:active, .chip.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* categorize */
+  .txn-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+  .txn-payee { font-size:15px; font-weight:550; letter-spacing:-.005em; }
+  .txn-meta { font-size:12px; color:var(--muted); margin-top:2px; }
+  .txn-amt { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .txn-amt.in { color:var(--good); }
+  .chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:11px; }
+  .chip { font-size:12.5px; padding:5px 10px; border-radius:7px; cursor:pointer;
+    border:1px solid var(--border); background:var(--surface-2); color:var(--text); }
+  .chip.excl { color:var(--muted); font-style:italic; }
+  .chip.save { background:var(--good-bg); border-color:#D3E2DA; color:#3F6B57; }
+  .chip:active,.chip.sel { background:var(--accent); border-color:var(--accent); color:#fff; }
 
-  /* ---- budget rows ---- */
-  .brow { padding: 9px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
-  .brow:last-child { border-bottom: none; }
-  .brow-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
-  .brow-cat { font-size: 14px; font-weight: 500; }
-  .brow-num { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .brow-num b { color: var(--text); font-weight: 600; }
-  .track { height: 5px; background: #EDEBE7; border-radius: 3px; overflow: hidden; }
-  .fill { height: 100%; border-radius: 3px; background: var(--good); transition: width .3s ease; }
-  .fill.warn { background: var(--warn); }
-  .fill.over { background: var(--over); }
+  /* rows */
+  .brow { padding:9px 0; border-bottom:1px solid var(--border); cursor:pointer; }
+  .brow:last-child { border-bottom:none; }
+  .brow-top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; gap:8px; }
+  .brow-cat { font-size:14px; font-weight:500; }
+  .brow-num { font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .brow-num b { color:var(--text); font-weight:600; }
+  .track { height:5px; background:#EDEBE7; border-radius:3px; overflow:hidden; }
+  .fill { height:100%; border-radius:3px; background:var(--good); transition:width .3s ease; }
+  .fill.warn { background:var(--warn); }
+  .fill.over { background:var(--over); }
 
-  .totals { display: flex; gap: 10px; }
-  .totals > div {
-    flex: 1; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--r); padding: 12px 13px;
-  }
-  .totals .lbl { font-size: 11.5px; color: var(--muted); }
-  .totals .val { font-size: 20px; font-weight: 620; font-variant-numeric: tabular-nums; margin-top: 2px; letter-spacing: -0.02em; }
+  .totals { display:flex; gap:10px; }
+  .totals > div { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:12px 13px; }
+  .totals .lbl { font-size:11.5px; color:var(--muted); }
+  .totals .val { font-size:20px; font-weight:620; font-variant-numeric:tabular-nums; margin-top:2px; letter-spacing:-.02em; }
 
-  .vault { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
-  .vault:last-child { border-bottom: none; }
-  .vault-bal { font-size: 15px; font-weight: 600; color: var(--good); font-variant-numeric: tabular-nums; }
-  .vault-sub { font-size: 11.5px; color: var(--faint); }
+  .lrow { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); }
+  .lrow:last-child { border-bottom:none; }
+  .lrow .nm { font-size:14px; font-weight:500; }
+  .lrow .sb { font-size:11.5px; color:var(--faint); }
+  .lrow .vl { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
 
-  .note {
-    font-size: 12.5px; line-height: 1.5; color: var(--muted);
-    background: var(--accent-bg); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
-  }
-  .note.flag { background: var(--over-bg); color: #8C4A4E; }
+  .note { font-size:12.5px; line-height:1.5; color:var(--muted); background:var(--accent-bg);
+    border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .note.flag { background:var(--over-bg); color:#8C4A4E; }
+  .empty { text-align:center; padding:48px 20px; color:var(--muted); font-size:13.5px; }
+  .empty b { display:block; color:var(--text); font-size:15px; margin-bottom:3px; font-weight:550; }
 
-  .empty { text-align: center; padding: 48px 20px; color: var(--muted); font-size: 13.5px; }
-  .empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 3px; font-weight: 550; }
+  .btn { display:block; width:100%; padding:12px; border-radius:9px; border:none; background:var(--accent);
+    color:#fff; font-size:14.5px; font-weight:500; cursor:pointer; font-family:inherit; }
+  .btn:active { background:#3A587A; }
+  .btn.ghost { background:var(--surface-2); color:var(--accent); border:1px solid var(--border); }
+  input,select { width:100%; padding:10px 11px; border:1px solid var(--border); border-radius:8px;
+    font-size:14.5px; margin-bottom:8px; font-family:inherit; background:var(--surface-2); color:var(--text); }
+  label { font-size:12.5px; color:var(--muted); display:block; margin-bottom:3px; }
 
-  .btn {
-    display: block; width: 100%; padding: 12px; border-radius: 9px; border: none;
-    background: var(--accent); color: #fff; font-size: 14.5px; font-weight: 500;
-    cursor: pointer; font-family: inherit;
-  }
-  .btn:active { background: #3A587A; }
-  .btn.ghost { background: var(--surface-2); color: var(--accent); border: 1px solid var(--border); }
-  input, select {
-    width: 100%; padding: 10px 11px; border: 1px solid var(--border); border-radius: 8px;
-    font-size: 14.5px; margin-bottom: 8px; font-family: inherit; background: var(--surface-2);
-    color: var(--text);
-  }
-  input:focus, select:focus { outline: 2px solid var(--accent-bg); border-color: var(--accent); }
-  label { font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 3px; }
+  nav { position:fixed; bottom:0; left:0; right:0; max-width:500px; margin:0 auto;
+    background:rgba(255,255,255,.94); backdrop-filter:blur(12px); border-top:1px solid var(--border);
+    display:flex; padding-bottom:env(safe-area-inset-bottom); z-index:20; }
+  nav button { flex:1; padding:11px 0 10px; background:none; border:none; font-size:11.5px;
+    color:var(--muted); cursor:pointer; font-family:inherit; }
+  nav button.active { color:var(--accent); font-weight:600; }
+  nav .dot { display:block; font-size:16px; line-height:1.1; margin-bottom:1px; }
+  .back { font-size:13px; color:var(--accent); cursor:pointer; margin-bottom:10px; display:inline-block; }
 
-  nav {
-    position: fixed; bottom: 0; left: 0; right: 0; max-width: 500px; margin: 0 auto;
-    background: rgba(255,255,255,.94); backdrop-filter: blur(12px);
-    border-top: 1px solid var(--border); display: flex; padding-bottom: env(safe-area-inset-bottom);
-  }
-  nav button {
-    flex: 1; padding: 11px 0 10px; background: none; border: none;
-    font-size: 11.5px; color: var(--muted); cursor: pointer; font-family: inherit;
-  }
-  nav button.active { color: var(--accent); font-weight: 600; }
-  nav .dot { display: block; font-size: 16px; line-height: 1.1; margin-bottom: 1px; }
-
-  .back { font-size: 13px; color: var(--accent); cursor: pointer; margin-bottom: 10px; display: inline-block; }
-  svg text { font-family: inherit; }
+  /* sparkline grid */
+  .spark-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); cursor:pointer; }
+  .spark-row:last-child { border-bottom:none; }
+  .spark-name { flex:1; min-width:0; }
+  .spark-name .n { font-size:13.5px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .spark-name .d { font-size:11px; color:var(--faint); }
+  .spark-name .d.bad { color:var(--over); }
+  svg text { font-family:inherit; }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <div>
-      <h1 id="title">Carter Budget</h1>
-      <div class="sub" id="subtitle">Loading</div>
-    </div>
+    <div class="sub" id="subtitle">Loading</div>
     <button class="sync-btn" id="sync-btn">Sync</button>
   </header>
-
   <section class="view active" id="view-categorize"><div id="txn-list"></div></section>
   <section class="view" id="view-budget"><div id="budget-body"></div></section>
   <section class="view" id="view-trends"><div id="trends-body"></div></section>
   <section class="view" id="view-accounts"><div id="accounts-body"></div></section>
 </div>
-
 <nav>
   <button class="active" data-v="categorize"><span class="dot">◎</span>Categorize</button>
   <button data-v="budget"><span class="dot">▤</span>Budget</button>
-  <button data-v="trends"><span class="dot">◪</span>Trends</button>
+  <button data-v="trends"><span class="dot">◪</span>Compare</button>
   <button data-v="accounts"><span class="dot">⬡</span>Accounts</button>
 </nav>
 
 <script>
 const API = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
 
-let cats = [], txns = [], budget = [], vaults = [];
+let cats = [], txns = [], months = [], trendCache = null;
 const now = new Date();
-const MONTH = now.toLocaleString('en-US', { month: 'long' });
-const YEAR  = now.getFullYear();
+let selMonth = now.toLocaleString('en-US', { month: 'long' });
+let selYear  = now.getFullYear();
 
 const money = n => '$' + Math.round(Math.abs(n)).toLocaleString();
 const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
 async function get(action, params = {}) {
-  const u = new URL(API);
-  u.searchParams.set('action', action);
-  Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  const u = new URL(API); u.searchParams.set('action', action);
+  Object.entries(params).forEach(([k,v]) => u.searchParams.set(k, v));
   return (await fetch(u)).json();
 }
-async function post(body) {
-  return (await fetch(API, { method: 'POST', body: JSON.stringify(body) })).json();
-}
+async function post(body) { return (await fetch(API,{method:'POST',body:JSON.stringify(body)})).json(); }
 
-// ---------- nav ----------
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   b.classList.add('active');
   document.getElementById('view-' + b.dataset.v).classList.add('active');
-  window.scrollTo(0, 0);
+  window.scrollTo(0,0);
   if (b.dataset.v === 'budget') loadBudget();
-  if (b.dataset.v === 'trends') loadTrendsList();
+  if (b.dataset.v === 'trends') loadCompare();
   if (b.dataset.v === 'accounts') loadAccounts();
 });
 
-// ---------- sync ----------
 document.getElementById('sync-btn').onclick = async () => {
   const btn = document.getElementById('sync-btn');
   btn.disabled = true; btn.textContent = 'Syncing';
-  const r = await post({ action: 'forceSync' });
+  const r = await post({ action:'forceSync' });
   btn.disabled = false; btn.textContent = 'Sync';
+  trendCache = null;
   if (r.error) { alert(r.error); return; }
-  if (r.errors && r.errors.length) alert('Some accounts had trouble:\n' + r.errors.join('\n'));
+  if (r.errors && r.errors.length) alert('Trouble with:\n' + r.errors.join('\n'));
   await loadCategorize();
 };
 
-// ---------- categorize ----------
+// ============ CATEGORIZE ============
 async function loadCategorize() {
   cats = await get('getCategories');
   txns = await get('getUncategorized');
   renderTxns();
 }
-
 function renderTxns() {
   const el = document.getElementById('txn-list');
-  document.getElementById('subtitle').textContent =
-    txns.length ? txns.length + ' to categorize' : 'All caught up';
-
-  if (!txns.length) {
-    el.innerHTML = '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>';
-    return;
-  }
+  document.getElementById('subtitle').textContent = txns.length ? txns.length + ' to categorize' : 'All caught up';
+  if (!txns.length) { el.innerHTML = '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>'; return; }
 
   const chipsHtml = cats.map(c => {
     const cls = c.type === 'Excluded' ? 'chip excl' : (c.type === 'Savings' ? 'chip save' : 'chip');
@@ -227,73 +187,76 @@ function renderTxns() {
   el.innerHTML = txns.map(t => `
     <div class="card" data-id="${esc(t.transactionId)}">
       <div class="txn-head">
-        <div>
-          <div class="txn-payee">${esc(t.payee)}</div>
-          <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.card || t.institution)}</div>
-        </div>
-        <div class="txn-amt ${t.amount > 0 ? 'in' : ''}">${t.amount > 0 ? '+' : ''}${money(t.amount)}</div>
+        <div><div class="txn-payee">${esc(t.payee)}</div>
+        <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.card || t.institution)}</div></div>
+        <div class="txn-amt ${t.amount > 0 ? 'in':''}">${t.amount > 0 ? '+':''}${money(t.amount)}</div>
       </div>
       <div class="chips">${chipsHtml}</div>
     </div>`).join('');
 
   el.querySelectorAll('.chip').forEach(chip => chip.onclick = async () => {
-    const card = chip.closest('.card');
-    const id = card.dataset.id;
+    const card = chip.closest('.card'); const id = card.dataset.id;
     chip.classList.add('sel');
     card.querySelectorAll('.chip').forEach(c => c.style.pointerEvents = 'none');
-    await post({ action: 'saveCategory', transactionId: id, category: chip.dataset.c });
+    await post({ action:'saveCategory', transactionId:id, category:chip.dataset.c });
+    trendCache = null;
     card.style.opacity = '.35';
     setTimeout(() => { txns = txns.filter(t => t.transactionId !== id); renderTxns(); }, 220);
   });
 }
 
-// ---------- budget ----------
+// ============ BUDGET (month picker) ============
 async function loadBudget() {
   const el = document.getElementById('budget-body');
   el.innerHTML = '<div class="empty">Loading</div>';
-  budget = await get('getBudgetSummary', { month: MONTH, year: YEAR });
-  vaults = await get('getVaults');
-  if (budget.error) {
-    el.innerHTML = `<div class="empty"><b>No budget for ${MONTH}</b>Run setupCurrentMonth() in Apps Script.</div>`;
-    return;
-  }
-  renderBudget();
-}
+  if (!months.length) months = await get('getAvailableMonths');
+  const budget = await get('getBudgetSummary', { month:selMonth, year:selYear });
+  const vaults = await get('getVaults');
+  const accts  = await get('getSpendByAccount', { month:selMonth, year:selYear });
 
-function renderBudget() {
+  const picker = `<div class="months">` + (months.length ? months.map(m =>
+    `<div class="mpill ${m.month===selMonth && m.year===selYear ? 'on':''}"
+      data-m="${m.month}" data-y="${m.year}">${m.month.slice(0,3)} ${String(m.year).slice(2)}</div>`
+  ).join('') : '') + `</div>`;
+
+  if (budget.error) {
+    el.innerHTML = picker + `<div class="empty"><b>No budget for ${selMonth} ${selYear}</b>Run setupCurrentMonth() in Apps Script.</div>`;
+    bindPicker(); return;
+  }
+
   const expenses = budget.filter(b => b.type === 'Expense');
   const savings  = budget.filter(b => b.type === 'Savings');
-  const totalBud = budget.reduce((s, b) => s + b.budgeted, 0);
-  const totalSpent = budget.reduce((s, b) => s + b.spent, 0);
-  const left = totalBud - totalSpent;
+  const tBud = budget.reduce((s,b) => s + b.budgeted, 0);
+  const tSpent = budget.reduce((s,b) => s + b.spent, 0);
+  const left = tBud - tSpent;
 
-  let html = `
+  let html = picker + `
     <div class="totals">
-      <div><div class="lbl">Spent</div><div class="val">${money(totalSpent)}</div></div>
-      <div><div class="lbl">${left < 0 ? 'Over by' : 'Left'}</div>
-           <div class="val" style="color:${left < 0 ? 'var(--over)' : 'var(--good)'}">${money(left)}</div></div>
+      <div><div class="lbl">Spent</div><div class="val">${money(tSpent)}</div></div>
+      <div><div class="lbl">${left < 0 ? 'Over by':'Left'}</div>
+        <div class="val" style="color:${left < 0 ? 'var(--over)':'var(--good)'}">${money(left)}</div></div>
     </div>
     <div class="card">${donut(expenses)}</div>
     <div class="section-label">Spending</div>
     <div class="card tight">${expenses.map(row).join('')}</div>`;
 
-  if (savings.length) {
-    html += `<div class="section-label">Savings contributions</div>
-             <div class="card tight">${savings.map(row).join('')}</div>`;
-  }
-  if (vaults && vaults.length) {
-    html += `<div class="section-label">Envelope balances</div><div class="card tight">` +
-      vaults.map(v => `
-        <div class="vault">
-          <div><div style="font-size:14px;font-weight:500">${esc(v.name)}</div>
-               <div class="vault-sub">${money(v.contributed)} in · ${money(v.spent)} spent</div></div>
-          <div class="vault-bal">${money(v.balance)}</div>
-        </div>`).join('') + `</div>
-      <div class="note">Money moved into an envelope counts against the budget that month. Spending it later does not, so a big trip paid from savings will not blow up that month.</div>`;
-  }
+  if (savings.length) html += `<div class="section-label">Savings contributions</div>
+    <div class="card tight">${savings.map(row).join('')}</div>`;
 
-  html += `
-    <div class="section-label">Add a category</div>
+  if (vaults && vaults.length) html += `<div class="section-label">Envelope balances</div>
+    <div class="card tight">` + vaults.map(v => `
+      <div class="lrow"><div><div class="nm">${esc(v.name)}</div>
+        <div class="sb">${money(v.contributed)} in · ${money(v.spent)} spent</div></div>
+        <div class="vl" style="color:var(--good)">${money(v.balance)}</div></div>`).join('') + `</div>
+    <div class="note">Money moved into an envelope counts against the budget that month. Spending it later does not, so a trip paid from savings will not blow up that month.</div>`;
+
+  if (accts && accts.length) html += `<div class="section-label">By card</div>
+    <div class="card tight">` + accts.map(a => `
+      <div class="lrow"><div><div class="nm">${esc(a.card)}</div>
+        <div class="sb">${esc(a.institution)}</div></div>
+        <div class="vl">${money(a.spent)}</div></div>`).join('') + `</div>`;
+
+  html += `<div class="section-label">Add a category</div>
     <div class="card">
       <label>Name</label><input type="text" id="c-name" placeholder="Subscriptions">
       <label>Monthly amount</label><input type="number" id="c-amt" placeholder="0">
@@ -306,87 +269,143 @@ function renderBudget() {
       <button class="btn ghost" id="c-add">Add category</button>
     </div>`;
 
-  document.getElementById('budget-body').innerHTML = html;
-
-  document.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
+  el.innerHTML = html;
+  bindPicker();
+  el.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
   document.getElementById('c-add').onclick = addCategory;
+}
+
+function bindPicker() {
+  document.querySelectorAll('#view-budget .mpill').forEach(p => p.onclick = () => {
+    selMonth = p.dataset.m; selYear = Number(p.dataset.y); loadBudget();
+  });
 }
 
 function row(b) {
   const pct = b.budgeted > 0 ? Math.min(100, (b.spent / b.budgeted) * 100) : 0;
   const cls = b.budgeted > 0 && b.spent > b.budgeted ? 'over' : (pct > 85 ? 'warn' : '');
-  return `
-    <div class="brow" data-cat="${esc(b.category)}">
-      <div class="brow-top">
-        <span class="brow-cat">${esc(b.category)}</span>
-        <span class="brow-num"><b>${money(b.spent)}</b> / ${money(b.budgeted)}</span>
-      </div>
-      <div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div>
-    </div>`;
+  return `<div class="brow" data-cat="${esc(b.category)}">
+    <div class="brow-top"><span class="brow-cat">${esc(b.category)}</span>
+      <span class="brow-num"><b>${money(b.spent)}</b> / ${money(b.budgeted)}</span></div>
+    <div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div></div>`;
 }
 
 function donut(rows) {
-  const data = rows.filter(r => r.spent > 0).sort((a, b) => b.spent - a.spent).slice(0, 6);
-  const total = data.reduce((s, d) => s + d.spent, 0);
-  if (!total) return '<div class="empty" style="padding:20px">Nothing spent yet this month.</div>';
-
+  const data = rows.filter(r => r.spent > 0).sort((a,b) => b.spent - a.spent).slice(0,6);
+  const total = data.reduce((s,d) => s + d.spent, 0);
+  if (!total) return '<div class="empty" style="padding:20px">Nothing spent yet.</div>';
   const shades = ['#45688E','#5D9078','#C79553','#8A7CA8','#7E9EB8','#B8676C'];
   const R = 52, C = 2 * Math.PI * R;
-  let offset = 0;
-  const arcs = data.map((d, i) => {
+  let off = 0;
+  const arcs = data.map((d,i) => {
     const len = (d.spent / total) * C;
-    const seg = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${shades[i % 6]}"
-      stroke-width="17" stroke-dasharray="${len - 1.5} ${C - len + 1.5}"
-      stroke-dashoffset="${-offset}" transform="rotate(-90 70 70)"/>`;
-    offset += len;
-    return seg;
+    const s = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${shades[i%6]}" stroke-width="17"
+      stroke-dasharray="${len-1.5} ${C-len+1.5}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"/>`;
+    off += len; return s;
   }).join('');
-
-  const legend = data.map((d, i) => `
+  const legend = data.map((d,i) => `
     <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin-bottom:5px">
-      <span style="width:9px;height:9px;border-radius:2px;background:${shades[i % 6]};flex:none"></span>
-      <span style="flex:1;color:var(--text)">${esc(d.category)}</span>
-      <span style="color:var(--muted);font-variant-numeric:tabular-nums">${money(d.spent)}</span>
-    </div>`).join('');
-
+      <span style="width:9px;height:9px;border-radius:2px;background:${shades[i%6]};flex:none"></span>
+      <span style="flex:1">${esc(d.category)}</span>
+      <span style="color:var(--muted);font-variant-numeric:tabular-nums">${money(d.spent)}</span></div>`).join('');
   return `<div style="display:flex;gap:14px;align-items:center">
-      <svg width="140" height="140" viewBox="0 0 140 140" style="flex:none">
-        ${arcs}
-        <text x="70" y="66" text-anchor="middle" font-size="17" font-weight="600" fill="#23262A">${money(total)}</text>
-        <text x="70" y="82" text-anchor="middle" font-size="10.5" fill="#767B82">this month</text>
-      </svg>
-      <div style="flex:1">${legend}</div>
-    </div>`;
+    <svg width="140" height="140" viewBox="0 0 140 140" style="flex:none">${arcs}
+      <text x="70" y="66" text-anchor="middle" font-size="17" font-weight="600" fill="#23262A">${money(total)}</text>
+      <text x="70" y="82" text-anchor="middle" font-size="10.5" fill="#767B82">spent</text></svg>
+    <div style="flex:1">${legend}</div></div>`;
 }
 
 async function addCategory() {
   const name = document.getElementById('c-name').value.trim();
-  const amt  = Number(document.getElementById('c-amt').value) || 0;
+  const amt = Number(document.getElementById('c-amt').value) || 0;
   const type = document.getElementById('c-type').value;
   if (!name) { alert('Give the category a name.'); return; }
   if (type !== 'Excluded' && !amt) { alert('Give it a monthly amount.'); return; }
-  const r = await post({ action: 'addCategory', category: name, defaultAmount: amt, type: type });
+  const r = await post({ action:'addCategory', category:name, defaultAmount:amt, type:type });
   if (r.error) { alert(r.error); return; }
-  cats = await get('getCategories');
-  loadBudget();
+  cats = await get('getCategories'); trendCache = null; loadBudget();
 }
 
-// ---------- trends ----------
-async function loadTrendsList() {
+// ============ COMPARE (all months, all categories) ============
+async function loadCompare() {
   const el = document.getElementById('trends-body');
   el.innerHTML = '<div class="empty">Loading</div>';
-  if (!budget.length) budget = await get('getBudgetSummary', { month: MONTH, year: YEAR });
-  if (budget.error) { el.innerHTML = '<div class="empty"><b>No data yet</b>Set up this month first.</div>'; return; }
+  if (!trendCache) trendCache = await get('getAllTrends', { months: 6 });
+  const t = trendCache;
+  if (t.error) { el.innerHTML = '<div class="empty"><b>No data yet</b>' + esc(t.error) + '</div>'; return; }
 
-  el.innerHTML = `<div class="section-label">Pick a category to see it over time</div>
-    <div class="card tight">` +
-    budget.filter(b => b.type !== 'Excluded').map(b => `
-      <div class="brow" data-cat="${esc(b.category)}">
-        <div class="brow-top"><span class="brow-cat">${esc(b.category)}</span>
-        <span class="brow-num">${money(b.spent)} / ${money(b.budgeted)}</span></div>
-      </div>`).join('') + '</div>';
+  const anySpend = t.totals.some(x => x.spent > 0);
+  if (!anySpend) { el.innerHTML = '<div class="empty"><b>Nothing to compare yet</b>Categorize a few transactions first.</div>'; return; }
 
-  el.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
+  // household totals over time
+  let html = `<div class="section-label">Household, last ${t.months.length} months</div>
+    <div class="card">${totalsChart(t)}</div>`;
+
+  // flag categories trending over
+  const flagged = t.categories.filter(c => {
+    const withB = c.data.filter(d => d.budgeted != null && d.budgeted > 0);
+    if (withB.length < 3) return false;
+    return withB.filter(d => d.spent > d.budgeted).length >= Math.ceil(withB.length * 0.6);
+  });
+  if (flagged.length) {
+    html += `<div class="note flag"><b>Running over consistently:</b> ${flagged.map(f => esc(f.name)).join(', ')}.
+      Either these budgets are too low or they are the ones to pull back on.</div>`;
+  }
+
+  html += `<div class="section-label">Every category<span>tap to drill in</span></div><div class="card tight">`;
+  html += t.categories
+    .map(c => ({ c, tot: c.data.reduce((s,d) => s + d.spent, 0) }))
+    .sort((a,b) => b.tot - a.tot)
+    .map(({ c }) => {
+      const last = c.data[c.data.length - 1];
+      const active = c.data.filter(d => d.spent > 0);
+      const avg = active.length ? active.reduce((s,d) => s + d.spent, 0) / active.length : 0;
+      const over = last.budgeted && last.spent > last.budgeted;
+      return `<div class="spark-row" data-cat="${esc(c.name)}">
+        <div class="spark-name"><div class="n">${esc(c.name)}</div>
+          <div class="d ${over ? 'bad':''}">${money(last.spent)} this month · ${money(avg)} avg</div></div>
+        ${sparkline(c.data)}
+      </div>`;
+    }).join('');
+  html += `</div>`;
+
+  el.innerHTML = html;
+  el.querySelectorAll('.spark-row').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
+}
+
+function totalsChart(t) {
+  const W = 320, H = 150, pad = 24;
+  const max = Math.max(...t.totals.map(x => Math.max(x.spent, x.budgeted)), 1);
+  const bw = (W - pad * 2) / t.totals.length;
+  const bars = t.totals.map((x,i) => {
+    const bx = pad + i * bw;
+    const sw = bw * 0.30, gap = bw * 0.06;
+    const sh = (x.spent / max) * (H - 42), bh = (x.budgeted / max) * (H - 42);
+    const over = x.spent > x.budgeted && x.budgeted > 0;
+    return `
+      <rect x="${bx + bw/2 - sw - gap/2}" y="${H-22-bh}" width="${sw}" height="${Math.max(bh,1)}" rx="3" fill="#D8D5CF"/>
+      <rect x="${bx + bw/2 + gap/2}" y="${H-22-sh}" width="${sw}" height="${Math.max(sh,1)}" rx="3"
+        fill="${over ? '#B8676C':'#45688E'}"/>
+      <text x="${bx + bw/2}" y="${H-7}" text-anchor="middle" font-size="10" fill="#767B82">${t.months[i].label}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${bars}</svg>
+    <div style="display:flex;gap:14px;font-size:11.5px;color:var(--muted);margin-top:6px;justify-content:center">
+      <span><span style="display:inline-block;width:9px;height:9px;background:#D8D5CF;border-radius:2px;margin-right:5px"></span>Budgeted</span>
+      <span><span style="display:inline-block;width:9px;height:9px;background:#45688E;border-radius:2px;margin-right:5px"></span>Spent</span>
+    </div>`;
+}
+
+function sparkline(data) {
+  const W = 76, H = 26;
+  const max = Math.max(...data.map(d => Math.max(d.spent, d.budgeted || 0)), 1);
+  const bw = W / data.length;
+  const bars = data.map((d,i) => {
+    const h = (d.spent / max) * (H - 4);
+    const over = d.budgeted && d.spent > d.budgeted;
+    return `<rect x="${i*bw+1}" y="${H-h}" width="${bw-2}" height="${Math.max(h,1)}" rx="1.5"
+      fill="${over ? '#B8676C':'#45688E'}" opacity="${i===data.length-1 ? 1 : .5}"/>`;
+  }).join('');
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="flex:none">${bars}</svg>`;
 }
 
 async function openTrend(category) {
@@ -394,26 +413,25 @@ async function openTrend(category) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelector('nav button[data-v="trends"]').classList.add('active');
   document.getElementById('view-trends').classList.add('active');
-  window.scrollTo(0, 0);
+  window.scrollTo(0,0);
 
   const el = document.getElementById('trends-body');
   el.innerHTML = '<div class="empty">Loading</div>';
-  const series = await get('getCategoryTrend', { category: category, months: 6 });
+  const series = await get('getCategoryTrend', { category:category, months:6 });
 
-  const withBudget = series.filter(s => s.budgeted != null && s.budgeted > 0);
-  const overs = withBudget.filter(s => s.spent > s.budgeted).length;
+  const withB = series.filter(s => s.budgeted != null && s.budgeted > 0);
+  const overs = withB.filter(s => s.spent > s.budgeted).length;
   const active = series.filter(s => s.spent > 0);
-  const avg = active.length ? active.reduce((s, x) => s + x.spent, 0) / active.length : 0;
-  const currentBudget = withBudget.length ? withBudget[withBudget.length - 1].budgeted : 0;
+  const avg = active.length ? active.reduce((s,x) => s + x.spent, 0) / active.length : 0;
+  const curB = withB.length ? withB[withB.length-1].budgeted : 0;
 
   let advice = '';
-  if (withBudget.length >= 3 && overs >= Math.ceil(withBudget.length * 0.6)) {
-    advice = `<div class="note flag">Over budget in ${overs} of the last ${withBudget.length} months.
-      Average spend is ${money(avg)} against a ${money(currentBudget)} budget.
-      Either the budget is too low or this is the category to pull back on.</div>`;
-  } else if (active.length >= 3 && currentBudget > 0 && avg < currentBudget * 0.6) {
-    advice = `<div class="note">Consistently under. Average is ${money(avg)} against ${money(currentBudget)},
-      so there is roughly ${money(currentBudget - avg)} a month that could move somewhere else.</div>`;
+  if (withB.length >= 3 && overs >= Math.ceil(withB.length * 0.6)) {
+    advice = `<div class="note flag">Over budget in ${overs} of the last ${withB.length} months.
+      Average is ${money(avg)} against a ${money(curB)} budget. Raising it to about ${money(Math.ceil(avg/25)*25)} would match reality.</div>`;
+  } else if (active.length >= 3 && curB > 0 && avg < curB * 0.6) {
+    advice = `<div class="note">Consistently under. Average is ${money(avg)} against ${money(curB)},
+      so roughly ${money(curB - avg)} a month could move elsewhere.</div>`;
   }
 
   el.innerHTML = `
@@ -424,91 +442,68 @@ async function openTrend(category) {
       ${bars(series)}
     </div>
     ${advice}
-    <div class="card tight">
-      ${series.map(s => `
-        <div class="vault">
-          <div style="font-size:13.5px">${s.label}</div>
-          <div style="font-size:13.5px;font-variant-numeric:tabular-nums;color:${
-            s.budgeted && s.spent > s.budgeted ? 'var(--over)' : 'var(--text)'}">
-            ${money(s.spent)}${s.budgeted ? ' <span style="color:var(--faint)">/ ' + money(s.budgeted) + '</span>' : ''}
-          </div>
-        </div>`).join('')}
-    </div>`;
-
-  document.getElementById('back').onclick = loadTrendsList;
+    <div class="card tight">${series.map(s => `
+      <div class="lrow"><div class="nm">${s.label}</div>
+        <div class="vl" style="color:${s.budgeted && s.spent > s.budgeted ? 'var(--over)':'var(--text)'}">
+          ${money(s.spent)}${s.budgeted ? ' <span style="color:var(--faint);font-weight:400">/ ' + money(s.budgeted) + '</span>':''}
+        </div></div>`).join('')}</div>`;
+  document.getElementById('back').onclick = loadCompare;
 }
 
 function bars(series) {
   const W = 300, H = 130, pad = 22;
   const max = Math.max(...series.map(s => Math.max(s.spent, s.budgeted || 0)), 1);
-  const bw = (W - pad * 2) / series.length;
-
-  const bars = series.map((s, i) => {
-    const x = pad + i * bw + bw * 0.18;
-    const w = bw * 0.64;
-    const h = (s.spent / max) * (H - 40);
-    const y = H - 20 - h;
+  const bw = (W - pad*2) / series.length;
+  const b = series.map((s,i) => {
+    const x = pad + i*bw + bw*0.18, w = bw*0.64;
+    const h = (s.spent/max)*(H-40), y = H-20-h;
     const over = s.budgeted && s.spent > s.budgeted;
-    return `<rect x="${x}" y="${y}" width="${w}" height="${Math.max(h, 1)}" rx="3"
-              fill="${over ? '#B8676C' : '#45688E'}" opacity="${i === series.length - 1 ? 1 : .72}"/>
-            <text x="${x + w / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#767B82">${s.label}</text>`;
+    return `<rect x="${x}" y="${y}" width="${w}" height="${Math.max(h,1)}" rx="3"
+      fill="${over ? '#B8676C':'#45688E'}" opacity="${i===series.length-1 ? 1 : .72}"/>
+      <text x="${x+w/2}" y="${H-6}" text-anchor="middle" font-size="10" fill="#767B82">${s.label}</text>`;
   }).join('');
-
-  // dashed budget line, using the most recent month that has one
-  const b = [...series].reverse().find(s => s.budgeted != null && s.budgeted > 0);
+  const bd = [...series].reverse().find(s => s.budgeted != null && s.budgeted > 0);
   let line = '';
-  if (b) {
-    const y = H - 20 - (b.budgeted / max) * (H - 40);
-    line = `<line x1="${pad}" x2="${W - pad}" y1="${y}" y2="${y}" stroke="#767B82"
-              stroke-width="1" stroke-dasharray="4 3" opacity=".7"/>
-            <text x="${W - pad}" y="${y - 4}" text-anchor="end" font-size="9.5" fill="#767B82">budget ${money(b.budgeted)}</text>`;
+  if (bd) {
+    const y = H-20-(bd.budgeted/max)*(H-40);
+    line = `<line x1="${pad}" x2="${W-pad}" y1="${y}" y2="${y}" stroke="#767B82" stroke-width="1" stroke-dasharray="4 3" opacity=".7"/>
+      <text x="${W-pad}" y="${y-4}" text-anchor="end" font-size="9.5" fill="#767B82">budget ${money(bd.budgeted)}</text>`;
   }
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${line}${bars}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${line}${b}</svg>`;
 }
 
-// ---------- accounts ----------
+// ============ ACCOUNTS ============
 async function loadAccounts() {
   const el = document.getElementById('accounts-body');
   el.innerHTML = '<div class="empty">Loading</div>';
   const accounts = await get('getAccounts');
-
-  let list = (accounts && accounts.length)
-    ? accounts.map(a => `
-        <div class="vault">
-          <div><div style="font-size:14px;font-weight:500">${esc(a.institution)}</div>
-          <div class="vault-sub">${a.cards.map(esc).join(' · ')}</div></div>
-        </div>`).join('')
+  const list = (accounts && accounts.length)
+    ? accounts.map(a => `<div class="lrow"><div><div class="nm">${esc(a.institution)}</div>
+        <div class="sb">${a.cards.map(esc).join(' · ')}</div></div></div>`).join('')
     : '<div class="empty" style="padding:22px">No accounts connected yet.</div>';
-
   el.innerHTML = `
     <div class="note">One login can cover several accounts. Both Chase cards under one Chase login count as a single connection against the 10 you have.</div>
     <div class="section-label">Connected</div>
     <div class="card tight">${list}</div>
     <div class="card"><button class="btn" id="connect">Connect an account</button></div>`;
-
   document.getElementById('connect').onclick = connectAccount;
 }
 
 async function connectAccount() {
-  const r = await post({ action: 'createLinkToken' });
+  const r = await post({ action:'createLinkToken' });
   if (!r.link_token) { alert(r.error_message || r.error || 'Could not start Plaid.'); return; }
-  Plaid.create({
-    token: r.link_token,
-    onSuccess: async (public_token) => {
-      const name = prompt('Name this institution (e.g. Chase, SoFi):');
-      if (!name) return;
-      const res = await post({ action: 'connectAccount', publicToken: public_token, accountName: name });
-      if (res.error) { alert(res.error); return; }
-      await post({ action: 'forceSync' });
-      loadAccounts();
-    }
-  }).open();
+  Plaid.create({ token:r.link_token, onSuccess: async (pt) => {
+    const name = prompt('Name this institution (e.g. Chase, SoFi):');
+    if (!name) return;
+    const res = await post({ action:'connectAccount', publicToken:pt, accountName:name });
+    if (res.error) { alert(res.error); return; }
+    await post({ action:'forceSync' });
+    trendCache = null; loadAccounts();
+  }}).open();
 }
 
-// ---------- util ----------
 function fmtDate(d) {
-  return new Date(String(d).slice(0, 10) + 'T12:00:00')
-    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return new Date(String(d).slice(0,10) + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 
 loadCategorize();
