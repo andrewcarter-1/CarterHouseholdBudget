@@ -100,6 +100,21 @@
   nav .dot { display:block; font-size:16px; line-height:1.1; margin-bottom:1px; }
   .back { font-size:13px; color:var(--accent); cursor:pointer; margin-bottom:10px; display:inline-block; }
 
+  /* split panel */
+  .split-link { font-size:12px; color:var(--accent); cursor:pointer; margin-top:9px; display:inline-block; }
+  .split-box { margin-top:10px; border-top:1px solid var(--border); padding-top:10px; }
+  .split-line { display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+  .split-line select { flex:1; margin:0; font-size:13px; padding:8px 9px; }
+  .split-line input { width:88px; margin:0; font-size:13px; padding:8px 9px; text-align:right; }
+  .split-line .rm { color:var(--faint); cursor:pointer; font-size:17px; padding:0 3px; flex:none; }
+  .split-foot { display:flex; justify-content:space-between; align-items:center; margin-top:8px; gap:8px; }
+  .split-tally { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .split-tally.bad { color:var(--over); }
+  .split-foot button { font-size:12.5px; padding:7px 12px; border-radius:7px; cursor:pointer; font-family:inherit; border:1px solid var(--border); }
+  .split-foot .add { background:var(--surface-2); color:var(--accent); }
+  .split-foot .go { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .rule-cat { font-size:12.5px; color:var(--accent); background:var(--accent-bg); padding:3px 8px; border-radius:6px; }
+
   /* sparkline grid */
   .spark-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); cursor:pointer; }
   .spark-row:last-child { border-bottom:none; }
@@ -165,6 +180,11 @@ document.getElementById('sync-btn').onclick = async () => {
   trendCache = null;
   if (r.error) { alert(r.error); return; }
   if (r.errors && r.errors.length) alert('Trouble with:\n' + r.errors.join('\n'));
+  else if (r.auto > 0) {
+    document.getElementById('subtitle').textContent = r.auto + ' auto-categorized';
+    setTimeout(() => loadCategorize(), 1400);
+    return;
+  }
   await loadCategorize();
 };
 
@@ -179,19 +199,24 @@ function renderTxns() {
   document.getElementById('subtitle').textContent = txns.length ? txns.length + ' to categorize' : 'All caught up';
   if (!txns.length) { el.innerHTML = '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>'; return; }
 
-  const chipsHtml = cats.map(c => {
+  // Most-used categories first, so the common ones are always in reach.
+  const ordered = [...cats].sort((a,b) => (b.used||0) - (a.used||0));
+  const chipsHtml = ordered.map(c => {
     const cls = c.type === 'Excluded' ? 'chip excl' : (c.type === 'Savings' ? 'chip save' : 'chip');
     return `<div class="${cls}" data-c="${esc(c.name)}">${esc(c.name)}</div>`;
   }).join('');
+  const optsHtml = ordered.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
 
   el.innerHTML = txns.map(t => `
-    <div class="card" data-id="${esc(t.transactionId)}">
+    <div class="card" data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}">
       <div class="txn-head">
         <div><div class="txn-payee">${esc(t.payee)}</div>
         <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.card || t.institution)}</div></div>
         <div class="txn-amt ${t.amount > 0 ? 'in':''}">${t.amount > 0 ? '+':''}${money(t.amount)}</div>
       </div>
       <div class="chips">${chipsHtml}</div>
+      <span class="split-link">Split across categories</span>
+      <div class="split-box" style="display:none" data-opts='${optsHtml.replace(/'/g, "&#39;")}'></div>
     </div>`).join('');
 
   el.querySelectorAll('.chip').forEach(chip => chip.onclick = async () => {
@@ -203,6 +228,78 @@ function renderTxns() {
     card.style.opacity = '.35';
     setTimeout(() => { txns = txns.filter(t => t.transactionId !== id); renderTxns(); }, 220);
   });
+
+  el.querySelectorAll('.split-link').forEach(link => link.onclick = () => {
+    const card = link.closest('.card');
+    const box = card.querySelector('.split-box');
+    if (box.style.display === 'none') {
+      openSplit(card, box);
+      link.textContent = 'Cancel split';
+    } else {
+      box.style.display = 'none'; box.innerHTML = '';
+      card.querySelector('.chips').style.display = '';
+      link.textContent = 'Split across categories';
+    }
+  });
+}
+
+function openSplit(card, box) {
+  card.querySelector('.chips').style.display = 'none';
+  box.style.display = 'block';
+  const total = Number(card.dataset.amt);
+  const opts = box.dataset.opts;
+
+  box.innerHTML = `
+    <div class="split-rows"></div>
+    <div class="split-foot">
+      <span class="split-tally"></span>
+      <span style="display:flex;gap:6px">
+        <button class="add">Add part</button>
+        <button class="go">Save split</button>
+      </span>
+    </div>`;
+
+  const rowsEl = box.querySelector('.split-rows');
+  const addLine = (amt) => {
+    const div = document.createElement('div');
+    div.className = 'split-line';
+    div.innerHTML = `<select>${opts}</select>
+      <input type="number" step="0.01" placeholder="0.00" value="${amt != null ? amt : ''}">
+      <span class="rm">×</span>`;
+    div.querySelector('.rm').onclick = () => { div.remove(); tally(); };
+    div.querySelector('input').oninput = tally;
+    rowsEl.appendChild(div);
+    tally();
+  };
+
+  function tally() {
+    const vals = [...rowsEl.querySelectorAll('input')].map(i => Number(i.value) || 0);
+    const sum = vals.reduce((a,b) => a + b, 0);
+    const diff = total - sum;
+    const t = box.querySelector('.split-tally');
+    t.textContent = Math.abs(diff) < 0.01
+      ? '$' + total.toFixed(2) + ' allocated'
+      : '$' + Math.abs(diff).toFixed(2) + (diff > 0 ? ' left' : ' over');
+    t.className = 'split-tally' + (Math.abs(diff) < 0.01 ? '' : ' bad');
+  }
+
+  addLine((total / 2).toFixed(2));
+  addLine((total / 2).toFixed(2));
+  box.querySelector('.add').onclick = () => addLine();
+
+  box.querySelector('.go').onclick = async () => {
+    const splits = [...rowsEl.querySelectorAll('.split-line')].map(l => ({
+      category: l.querySelector('select').value,
+      amount: Number(l.querySelector('input').value) || 0
+    })).filter(s => s.amount > 0);
+    if (splits.length < 2) { alert('A split needs at least two parts with amounts.'); return; }
+    const id = card.dataset.id;
+    const r = await post({ action:'splitTransaction', transactionId:id, splits:splits });
+    if (r.error) { alert(r.error); return; }
+    trendCache = null;
+    card.style.opacity = '.35';
+    setTimeout(() => { txns = txns.filter(t => t.transactionId !== id); renderTxns(); }, 220);
+  };
 }
 
 // ============ BUDGET (month picker) ============
@@ -210,6 +307,10 @@ async function loadBudget() {
   const el = document.getElementById('budget-body');
   el.innerHTML = '<div class="empty">Loading</div>';
   if (!months.length) months = await get('getAvailableMonths');
+  // Current month may not have a tab yet; the backend creates it on request.
+  if (!months.some(m => m.month === selMonth && m.year === selYear)) {
+    months = [{ month: selMonth, year: selYear, label: selMonth + ' ' + selYear }, ...months];
+  }
   const budget = await get('getBudgetSummary', { month:selMonth, year:selYear });
   const vaults = await get('getVaults');
   const accts  = await get('getSpendByAccount', { month:selMonth, year:selYear });
@@ -477,16 +578,44 @@ async function loadAccounts() {
   const el = document.getElementById('accounts-body');
   el.innerHTML = '<div class="empty">Loading</div>';
   const accounts = await get('getAccounts');
+  const rules = await get('getRules');
+
   const list = (accounts && accounts.length)
     ? accounts.map(a => `<div class="lrow"><div><div class="nm">${esc(a.institution)}</div>
         <div class="sb">${a.cards.map(esc).join(' · ')}</div></div></div>`).join('')
     : '<div class="empty" style="padding:22px">No accounts connected yet.</div>';
+
+  const ruleList = (rules && rules.length)
+    ? rules.map(r => `<div class="lrow">
+        <div style="min-width:0;flex:1"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.example)}</div>
+        <div class="sb">used ${r.count}×</div></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="rule-cat">${esc(r.category)}</span>
+          <span class="rm" data-m="${esc(r.match)}" style="color:var(--faint);cursor:pointer;font-size:17px">×</span>
+        </div></div>`).join('')
+    : '<div class="empty" style="padding:22px">No rules yet. Categorize a few transactions and they build themselves.</div>';
+
   el.innerHTML = `
     <div class="note">One login can cover several accounts. Both Chase cards under one Chase login count as a single connection against the 10 you have.</div>
     <div class="section-label">Connected</div>
     <div class="card tight">${list}</div>
-    <div class="card"><button class="btn" id="connect">Connect an account</button></div>`;
+    <div class="card"><button class="btn" id="connect">Connect an account</button></div>
+
+    <div class="section-label">Merchant memory<span id="apply-rules">apply to queue</span></div>
+    <div class="note">Every time you categorize something, the payee is remembered. Next sync, anything matching skips the queue and files itself.</div>
+    <div class="card tight">${ruleList}</div>`;
+
   document.getElementById('connect').onclick = connectAccount;
+  document.getElementById('apply-rules').onclick = async () => {
+    const r = await post({ action:'applyRules' });
+    alert(r.applied ? r.applied + ' transactions categorized from memory.' : 'Nothing in the queue matched a known payee.');
+    trendCache = null; loadAccounts();
+  };
+  el.querySelectorAll('.rm').forEach(x => x.onclick = async () => {
+    if (!confirm('Forget this merchant rule?')) return;
+    await post({ action:'deleteRule', payee:x.dataset.m });
+    loadAccounts();
+  });
 }
 
 async function connectAccount() {
