@@ -2,351 +2,516 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Carter Household Budget</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Carter Budget</title>
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
   :root {
-    --bg: #FFFFFF;
-    --surface: #FAFAF9;
-    --border: #E5E7EB;
-    --text: #1A1A1A;
-    --muted: #6B7280;
-    --accent: #2D5BFF;
-    --accent-soft: #EEF1FF;
-    --good: #16A34A;
-    --bad: #DC2626;
-    --radius: 10px;
+    --bg:        #F4F3F0;
+    --surface:   #FFFFFF;
+    --surface-2: #FAF9F7;
+    --border:    #E4E1DB;
+    --text:      #23262A;
+    --muted:     #767B82;
+    --faint:     #9BA0A6;
+    --accent:    #45688E;
+    --accent-bg: #ECF1F6;
+    --good:      #5D9078;
+    --good-bg:   #EDF3F0;
+    --warn:      #C79553;
+    --over:      #B8676C;
+    --over-bg:   #F7EDED;
+    --r:         12px;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0;
-    font-family: -apple-system, "Inter", BlinkMacSystemFont, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    -webkit-font-smoothing: antialiased;
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    -webkit-font-smoothing: antialiased; font-size: 15px; line-height: 1.45;
   }
-  #app {
-    max-width: 480px;
-    margin: 0 auto;
-    min-height: 100vh;
-    padding-bottom: 84px;
-  }
+  #app { max-width: 500px; margin: 0 auto; min-height: 100vh; padding-bottom: 76px; }
+
   header {
-    padding: 24px 20px 16px;
-    border-bottom: 1px solid var(--border);
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 18px 13px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 20;
   }
-  header h1 {
-    font-size: 20px;
-    font-weight: 600;
-    margin: 0 0 2px;
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  header .sub { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+  .sync-btn {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--accent);
+    font-size: 13px; font-weight: 500; padding: 7px 12px; border-radius: 8px; cursor: pointer;
   }
-  header p {
-    font-size: 13px;
-    color: var(--muted);
-    margin: 0;
-  }
-  .view { display: none; padding: 16px 20px 8px; }
+  .sync-btn:active { background: var(--accent-bg); }
+  .sync-btn[disabled] { color: var(--faint); }
+
+  .view { display: none; padding: 12px 14px 4px; }
   .view.active { display: block; }
 
   .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 14px; margin-bottom: 10px;
   }
-  .txn-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
-  .txn-payee { font-size: 15px; font-weight: 500; }
-  .txn-meta { font-size: 12px; color: var(--muted); }
-  .txn-amount { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .txn-amount.neg { color: var(--text); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .card.tight { padding: 10px 14px; }
+  .section-label { font-size: 12.5px; color: var(--muted); margin: 14px 2px 7px; font-weight: 500; }
+
+  /* ---- categorize ---- */
+  .txn-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .txn-payee { font-size: 15px; font-weight: 550; letter-spacing: -0.005em; }
+  .txn-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .txn-amt { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .txn-amt.in { color: var(--good); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
   .chip {
-    font-size: 13px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: white;
-    color: var(--text);
-    cursor: pointer;
+    font-size: 12.5px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
   }
-  .chip:hover { border-color: var(--accent); }
-  .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  .chip.excl { color: var(--muted); font-style: italic; }
+  .chip.save { background: var(--good-bg); border-color: #D3E2DA; color: #3F6B57; }
+  .chip:active, .chip.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-  .empty {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--muted);
-  }
-  .empty strong { display: block; color: var(--text); font-size: 16px; margin-bottom: 4px; }
+  /* ---- budget rows ---- */
+  .brow { padding: 9px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .brow:last-child { border-bottom: none; }
+  .brow-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+  .brow-cat { font-size: 14px; font-weight: 500; }
+  .brow-num { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .brow-num b { color: var(--text); font-weight: 600; }
+  .track { height: 5px; background: #EDEBE7; border-radius: 3px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 3px; background: var(--good); transition: width .3s ease; }
+  .fill.warn { background: var(--warn); }
+  .fill.over { background: var(--over); }
 
-  .budget-row {
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
+  .totals { display: flex; gap: 10px; }
+  .totals > div {
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 12px 13px;
   }
-  .budget-row:last-child { border-bottom: none; }
-  .budget-top { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
-  .budget-cat { font-weight: 500; }
-  .budget-nums { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .bar-track { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 999px; background: var(--good); }
-  .bar-fill.over { background: var(--bad); }
+  .totals .lbl { font-size: 11.5px; color: var(--muted); }
+  .totals .val { font-size: 20px; font-weight: 620; font-variant-numeric: tabular-nums; margin-top: 2px; letter-spacing: -0.02em; }
+
+  .vault { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .vault:last-child { border-bottom: none; }
+  .vault-bal { font-size: 15px; font-weight: 600; color: var(--good); font-variant-numeric: tabular-nums; }
+  .vault-sub { font-size: 11.5px; color: var(--faint); }
+
+  .note {
+    font-size: 12.5px; line-height: 1.5; color: var(--muted);
+    background: var(--accent-bg); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
+  }
+  .note.flag { background: var(--over-bg); color: #8C4A4E; }
+
+  .empty { text-align: center; padding: 48px 20px; color: var(--muted); font-size: 13.5px; }
+  .empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 3px; font-weight: 550; }
 
   .btn {
-    display: block;
-    width: 100%;
-    padding: 13px;
-    border-radius: var(--radius);
-    border: none;
-    background: var(--accent);
-    color: white;
-    font-size: 15px;
-    font-weight: 500;
-    cursor: pointer;
-    text-align: center;
+    display: block; width: 100%; padding: 12px; border-radius: 9px; border: none;
+    background: var(--accent); color: #fff; font-size: 14.5px; font-weight: 500;
+    cursor: pointer; font-family: inherit;
   }
-  .btn.secondary {
-    background: white;
-    color: var(--accent);
-    border: 1px solid var(--accent);
+  .btn:active { background: #3A587A; }
+  .btn.ghost { background: var(--surface-2); color: var(--accent); border: 1px solid var(--border); }
+  input, select {
+    width: 100%; padding: 10px 11px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 14.5px; margin-bottom: 8px; font-family: inherit; background: var(--surface-2);
+    color: var(--text);
   }
-  input[type="text"], input[type="number"] {
-    width: 100%;
-    padding: 11px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 15px;
-    margin-bottom: 10px;
-    font-family: inherit;
-  }
-  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+  input:focus, select:focus { outline: 2px solid var(--accent-bg); border-color: var(--accent); }
+  label { font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 3px; }
 
   nav {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    max-width: 480px;
-    margin: 0 auto;
-    background: white;
-    border-top: 1px solid var(--border);
-    display: flex;
+    position: fixed; bottom: 0; left: 0; right: 0; max-width: 500px; margin: 0 auto;
+    background: rgba(255,255,255,.94); backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border); display: flex; padding-bottom: env(safe-area-inset-bottom);
   }
   nav button {
-    flex: 1;
-    padding: 14px 0 10px;
-    background: none;
-    border: none;
-    font-size: 12px;
-    color: var(--muted);
-    cursor: pointer;
+    flex: 1; padding: 11px 0 10px; background: none; border: none;
+    font-size: 11.5px; color: var(--muted); cursor: pointer; font-family: inherit;
   }
   nav button.active { color: var(--accent); font-weight: 600; }
+  nav .dot { display: block; font-size: 16px; line-height: 1.1; margin-bottom: 1px; }
 
-  .accounts-list { font-size: 14px; color: var(--muted); margin: 10px 0; }
-  .accounts-list div { padding: 6px 0; }
+  .back { font-size: 13px; color: var(--accent); cursor: pointer; margin-bottom: 10px; display: inline-block; }
+  svg text { font-family: inherit; }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>Carter Household Budget</h1>
-    <p id="subtitle">Loading&hellip;</p>
+    <div>
+      <h1 id="title">Carter Budget</h1>
+      <div class="sub" id="subtitle">Loading</div>
+    </div>
+    <button class="sync-btn" id="sync-btn">Sync</button>
   </header>
 
-  <!-- CATEGORIZE VIEW -->
-  <section class="view active" id="view-categorize">
-    <div id="txn-list"></div>
-  </section>
-
-  <!-- BUDGET VIEW -->
-  <section class="view" id="view-budget">
-    <div class="card" id="budget-list"></div>
-  </section>
-
-  <!-- CONNECT VIEW -->
-  <section class="view" id="view-connect">
-    <div class="card">
-      <p style="margin-top:0; font-size:14px; color:var(--muted);">
-        Connected accounts sync automatically each week. Add a new one below.
-      </p>
-      <div class="accounts-list" id="accounts-list"></div>
-      <button class="btn" id="connect-btn">Connect a new account</button>
-    </div>
-    <div class="card">
-      <p style="margin-top:0; font-size:14px; font-weight:500;">Add a category</p>
-      <label for="cat-name">Category name</label>
-      <input type="text" id="cat-name" placeholder="e.g. Subscriptions">
-      <label for="cat-amount">Monthly budget amount</label>
-      <input type="number" id="cat-amount" placeholder="0">
-      <button class="btn secondary" id="add-cat-btn">Add category</button>
-    </div>
-  </section>
+  <section class="view active" id="view-categorize"><div id="txn-list"></div></section>
+  <section class="view" id="view-budget"><div id="budget-body"></div></section>
+  <section class="view" id="view-trends"><div id="trends-body"></div></section>
+  <section class="view" id="view-accounts"><div id="accounts-body"></div></section>
 </div>
 
 <nav>
-  <button class="active" data-view="categorize">Categorize</button>
-  <button data-view="budget">Budget</button>
-  <button data-view="connect">Connect</button>
+  <button class="active" data-v="categorize"><span class="dot">◎</span>Categorize</button>
+  <button data-v="budget"><span class="dot">▤</span>Budget</button>
+  <button data-v="trends"><span class="dot">◪</span>Trends</button>
+  <button data-v="accounts"><span class="dot">⬡</span>Accounts</button>
 </nav>
 
 <script>
-  // ===== CONFIG =====
-  const API_URL = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
+const API = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
 
-  let categories = [];
-  let uncategorized = [];
+let cats = [], txns = [], budget = [], vaults = [];
+const now = new Date();
+const MONTH = now.toLocaleString('en-US', { month: 'long' });
+const YEAR  = now.getFullYear();
 
-  // ===== NAVIGATION =====
-  document.querySelectorAll('nav button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('view-' + btn.dataset.view).classList.add('active');
-      if (btn.dataset.view === 'budget') loadBudget();
-    });
-  });
+const money = n => '$' + Math.round(Math.abs(n)).toLocaleString();
+const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
-  // ===== API HELPERS =====
-  async function apiGet(action, params = {}) {
-    const url = new URL(API_URL);
-    url.searchParams.set('action', action);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-    const res = await fetch(url);
-    return res.json();
+async function get(action, params = {}) {
+  const u = new URL(API);
+  u.searchParams.set('action', action);
+  Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  return (await fetch(u)).json();
+}
+async function post(body) {
+  return (await fetch(API, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+
+// ---------- nav ----------
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('view-' + b.dataset.v).classList.add('active');
+  window.scrollTo(0, 0);
+  if (b.dataset.v === 'budget') loadBudget();
+  if (b.dataset.v === 'trends') loadTrendsList();
+  if (b.dataset.v === 'accounts') loadAccounts();
+});
+
+// ---------- sync ----------
+document.getElementById('sync-btn').onclick = async () => {
+  const btn = document.getElementById('sync-btn');
+  btn.disabled = true; btn.textContent = 'Syncing';
+  const r = await post({ action: 'forceSync' });
+  btn.disabled = false; btn.textContent = 'Sync';
+  if (r.error) { alert(r.error); return; }
+  if (r.errors && r.errors.length) alert('Some accounts had trouble:\n' + r.errors.join('\n'));
+  await loadCategorize();
+};
+
+// ---------- categorize ----------
+async function loadCategorize() {
+  cats = await get('getCategories');
+  txns = await get('getUncategorized');
+  renderTxns();
+}
+
+function renderTxns() {
+  const el = document.getElementById('txn-list');
+  document.getElementById('subtitle').textContent =
+    txns.length ? txns.length + ' to categorize' : 'All caught up';
+
+  if (!txns.length) {
+    el.innerHTML = '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>';
+    return;
   }
 
-  async function apiPost(body) {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      body: JSON.stringify(body)
-    });
-    return res.json();
-  }
+  const chipsHtml = cats.map(c => {
+    const cls = c.type === 'Excluded' ? 'chip excl' : (c.type === 'Savings' ? 'chip save' : 'chip');
+    return `<div class="${cls}" data-c="${esc(c.name)}">${esc(c.name)}</div>`;
+  }).join('');
 
-  // ===== CATEGORIZE VIEW =====
-  async function loadUncategorized() {
-    document.getElementById('subtitle').textContent = 'Loading transactions…';
-    categories = await apiGet('getCategories');
-    uncategorized = await apiGet('getUncategorized');
-    renderTransactions();
-  }
-
-  function renderTransactions() {
-    const list = document.getElementById('txn-list');
-    document.getElementById('subtitle').textContent =
-      uncategorized.length ? uncategorized.length + ' to categorize' : 'All caught up';
-
-    if (!uncategorized.length) {
-      list.innerHTML = '<div class="empty"><strong>Nothing to categorize</strong>New transactions show up here after each weekly sync.</div>';
-      return;
-    }
-
-    list.innerHTML = uncategorized.map(txn => `
-      <div class="card" data-id="${txn.transactionId}">
-        <div class="txn-row">
-          <div>
-            <div class="txn-payee">${txn.payee}</div>
-            <div class="txn-meta">${formatDate(txn.date)} · ${txn.account}</div>
-          </div>
-          <div class="txn-amount">${formatAmount(txn.amount)}</div>
+  el.innerHTML = txns.map(t => `
+    <div class="card" data-id="${esc(t.transactionId)}">
+      <div class="txn-head">
+        <div>
+          <div class="txn-payee">${esc(t.payee)}</div>
+          <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.card || t.institution)}</div>
         </div>
-        <div class="chips">
-          ${categories.map(c => `<div class="chip" data-cat="${c}">${c}</div>`).join('')}
-        </div>
+        <div class="txn-amt ${t.amount > 0 ? 'in' : ''}">${t.amount > 0 ? '+' : ''}${money(t.amount)}</div>
       </div>
-    `).join('');
+      <div class="chips">${chipsHtml}</div>
+    </div>`).join('');
 
-    list.querySelectorAll('.chip').forEach(chip => {
-      chip.addEventListener('click', async () => {
-        const card = chip.closest('.card');
-        const transactionId = card.dataset.id;
-        chip.textContent = chip.textContent + ' ✓';
-        card.querySelectorAll('.chip').forEach(c => c.style.pointerEvents = 'none');
-        chip.classList.add('selected');
-        await apiPost({ action: 'saveCategory', transactionId, category: chip.dataset.cat });
-        card.style.opacity = '0.4';
-        setTimeout(() => {
-          uncategorized = uncategorized.filter(t => t.transactionId !== transactionId);
-          renderTransactions();
-        }, 300);
-      });
-    });
+  el.querySelectorAll('.chip').forEach(chip => chip.onclick = async () => {
+    const card = chip.closest('.card');
+    const id = card.dataset.id;
+    chip.classList.add('sel');
+    card.querySelectorAll('.chip').forEach(c => c.style.pointerEvents = 'none');
+    await post({ action: 'saveCategory', transactionId: id, category: chip.dataset.c });
+    card.style.opacity = '.35';
+    setTimeout(() => { txns = txns.filter(t => t.transactionId !== id); renderTxns(); }, 220);
+  });
+}
+
+// ---------- budget ----------
+async function loadBudget() {
+  const el = document.getElementById('budget-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  budget = await get('getBudgetSummary', { month: MONTH, year: YEAR });
+  vaults = await get('getVaults');
+  if (budget.error) {
+    el.innerHTML = `<div class="empty"><b>No budget for ${MONTH}</b>Run setupCurrentMonth() in Apps Script.</div>`;
+    return;
+  }
+  renderBudget();
+}
+
+function renderBudget() {
+  const expenses = budget.filter(b => b.type === 'Expense');
+  const savings  = budget.filter(b => b.type === 'Savings');
+  const totalBud = budget.reduce((s, b) => s + b.budgeted, 0);
+  const totalSpent = budget.reduce((s, b) => s + b.spent, 0);
+  const left = totalBud - totalSpent;
+
+  let html = `
+    <div class="totals">
+      <div><div class="lbl">Spent</div><div class="val">${money(totalSpent)}</div></div>
+      <div><div class="lbl">${left < 0 ? 'Over by' : 'Left'}</div>
+           <div class="val" style="color:${left < 0 ? 'var(--over)' : 'var(--good)'}">${money(left)}</div></div>
+    </div>
+    <div class="card">${donut(expenses)}</div>
+    <div class="section-label">Spending</div>
+    <div class="card tight">${expenses.map(row).join('')}</div>`;
+
+  if (savings.length) {
+    html += `<div class="section-label">Savings contributions</div>
+             <div class="card tight">${savings.map(row).join('')}</div>`;
+  }
+  if (vaults && vaults.length) {
+    html += `<div class="section-label">Envelope balances</div><div class="card tight">` +
+      vaults.map(v => `
+        <div class="vault">
+          <div><div style="font-size:14px;font-weight:500">${esc(v.name)}</div>
+               <div class="vault-sub">${money(v.contributed)} in · ${money(v.spent)} spent</div></div>
+          <div class="vault-bal">${money(v.balance)}</div>
+        </div>`).join('') + `</div>
+      <div class="note">Money moved into an envelope counts against the budget that month. Spending it later does not, so a big trip paid from savings will not blow up that month.</div>`;
   }
 
-  // ===== BUDGET VIEW =====
-  async function loadBudget() {
-    const now = new Date();
-    const month = now.toLocaleString('en-US', { month: 'long' });
-    const year = now.getFullYear();
-    const rows = await apiGet('getBudgetSummary', { month, year });
-    renderBudget(rows, month, year);
+  html += `
+    <div class="section-label">Add a category</div>
+    <div class="card">
+      <label>Name</label><input type="text" id="c-name" placeholder="Subscriptions">
+      <label>Monthly amount</label><input type="number" id="c-amt" placeholder="0">
+      <label>Type</label>
+      <select id="c-type">
+        <option value="Expense">Expense — counts against budget</option>
+        <option value="Savings">Savings — builds an envelope</option>
+        <option value="Excluded">Excluded — ignore (transfers, CC payments)</option>
+      </select>
+      <button class="btn ghost" id="c-add">Add category</button>
+    </div>`;
+
+  document.getElementById('budget-body').innerHTML = html;
+
+  document.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
+  document.getElementById('c-add').onclick = addCategory;
+}
+
+function row(b) {
+  const pct = b.budgeted > 0 ? Math.min(100, (b.spent / b.budgeted) * 100) : 0;
+  const cls = b.budgeted > 0 && b.spent > b.budgeted ? 'over' : (pct > 85 ? 'warn' : '');
+  return `
+    <div class="brow" data-cat="${esc(b.category)}">
+      <div class="brow-top">
+        <span class="brow-cat">${esc(b.category)}</span>
+        <span class="brow-num"><b>${money(b.spent)}</b> / ${money(b.budgeted)}</span>
+      </div>
+      <div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div>
+    </div>`;
+}
+
+function donut(rows) {
+  const data = rows.filter(r => r.spent > 0).sort((a, b) => b.spent - a.spent).slice(0, 6);
+  const total = data.reduce((s, d) => s + d.spent, 0);
+  if (!total) return '<div class="empty" style="padding:20px">Nothing spent yet this month.</div>';
+
+  const shades = ['#45688E','#5D9078','#C79553','#8A7CA8','#7E9EB8','#B8676C'];
+  const R = 52, C = 2 * Math.PI * R;
+  let offset = 0;
+  const arcs = data.map((d, i) => {
+    const len = (d.spent / total) * C;
+    const seg = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${shades[i % 6]}"
+      stroke-width="17" stroke-dasharray="${len - 1.5} ${C - len + 1.5}"
+      stroke-dashoffset="${-offset}" transform="rotate(-90 70 70)"/>`;
+    offset += len;
+    return seg;
+  }).join('');
+
+  const legend = data.map((d, i) => `
+    <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin-bottom:5px">
+      <span style="width:9px;height:9px;border-radius:2px;background:${shades[i % 6]};flex:none"></span>
+      <span style="flex:1;color:var(--text)">${esc(d.category)}</span>
+      <span style="color:var(--muted);font-variant-numeric:tabular-nums">${money(d.spent)}</span>
+    </div>`).join('');
+
+  return `<div style="display:flex;gap:14px;align-items:center">
+      <svg width="140" height="140" viewBox="0 0 140 140" style="flex:none">
+        ${arcs}
+        <text x="70" y="66" text-anchor="middle" font-size="17" font-weight="600" fill="#23262A">${money(total)}</text>
+        <text x="70" y="82" text-anchor="middle" font-size="10.5" fill="#767B82">this month</text>
+      </svg>
+      <div style="flex:1">${legend}</div>
+    </div>`;
+}
+
+async function addCategory() {
+  const name = document.getElementById('c-name').value.trim();
+  const amt  = Number(document.getElementById('c-amt').value) || 0;
+  const type = document.getElementById('c-type').value;
+  if (!name) { alert('Give the category a name.'); return; }
+  if (type !== 'Excluded' && !amt) { alert('Give it a monthly amount.'); return; }
+  const r = await post({ action: 'addCategory', category: name, defaultAmount: amt, type: type });
+  if (r.error) { alert(r.error); return; }
+  cats = await get('getCategories');
+  loadBudget();
+}
+
+// ---------- trends ----------
+async function loadTrendsList() {
+  const el = document.getElementById('trends-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  if (!budget.length) budget = await get('getBudgetSummary', { month: MONTH, year: YEAR });
+  if (budget.error) { el.innerHTML = '<div class="empty"><b>No data yet</b>Set up this month first.</div>'; return; }
+
+  el.innerHTML = `<div class="section-label">Pick a category to see it over time</div>
+    <div class="card tight">` +
+    budget.filter(b => b.type !== 'Excluded').map(b => `
+      <div class="brow" data-cat="${esc(b.category)}">
+        <div class="brow-top"><span class="brow-cat">${esc(b.category)}</span>
+        <span class="brow-num">${money(b.spent)} / ${money(b.budgeted)}</span></div>
+      </div>`).join('') + '</div>';
+
+  el.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
+}
+
+async function openTrend(category) {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelector('nav button[data-v="trends"]').classList.add('active');
+  document.getElementById('view-trends').classList.add('active');
+  window.scrollTo(0, 0);
+
+  const el = document.getElementById('trends-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  const series = await get('getCategoryTrend', { category: category, months: 6 });
+
+  const withBudget = series.filter(s => s.budgeted != null && s.budgeted > 0);
+  const overs = withBudget.filter(s => s.spent > s.budgeted).length;
+  const active = series.filter(s => s.spent > 0);
+  const avg = active.length ? active.reduce((s, x) => s + x.spent, 0) / active.length : 0;
+  const currentBudget = withBudget.length ? withBudget[withBudget.length - 1].budgeted : 0;
+
+  let advice = '';
+  if (withBudget.length >= 3 && overs >= Math.ceil(withBudget.length * 0.6)) {
+    advice = `<div class="note flag">Over budget in ${overs} of the last ${withBudget.length} months.
+      Average spend is ${money(avg)} against a ${money(currentBudget)} budget.
+      Either the budget is too low or this is the category to pull back on.</div>`;
+  } else if (active.length >= 3 && currentBudget > 0 && avg < currentBudget * 0.6) {
+    advice = `<div class="note">Consistently under. Average is ${money(avg)} against ${money(currentBudget)},
+      so there is roughly ${money(currentBudget - avg)} a month that could move somewhere else.</div>`;
   }
 
-  function renderBudget(rows, month, year) {
-    const container = document.getElementById('budget-list');
-    if (!Array.isArray(rows) || rows.length < 2) {
-      container.innerHTML = '<div class="empty"><strong>No budget tab yet</strong>Run setupMonthlyTab for ' + month + ' ' + year + ' in Apps Script.</div>';
-      return;
-    }
-    const body = rows.slice(1); // skip header row
-    container.innerHTML = `<p style="margin:0 0 8px; font-size:13px; color:var(--muted);">${month} ${year}</p>` +
-      body.map(row => {
-        const [cat, budgeted, spent, remaining] = row;
-        const spentAbs = Math.abs(spent || 0);
-        const budgetNum = Number(budgeted) || 0;
-        const pct = budgetNum > 0 ? Math.min(100, (spentAbs / budgetNum) * 100) : 0;
-        const over = budgetNum > 0 && spentAbs > budgetNum;
-        return `
-          <div class="budget-row">
-            <div class="budget-top">
-              <span class="budget-cat">${cat}</span>
-              <span class="budget-nums">$${spentAbs.toFixed(0)} of $${budgetNum.toFixed(0)}</span>
-            </div>
-            <div class="bar-track"><div class="bar-fill ${over ? 'over' : ''}" style="width:${pct}%"></div></div>
+  el.innerHTML = `
+    <span class="back" id="back">← All categories</span>
+    <div class="card">
+      <div style="font-size:16px;font-weight:600;margin-bottom:2px">${esc(category)}</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Last 6 months</div>
+      ${bars(series)}
+    </div>
+    ${advice}
+    <div class="card tight">
+      ${series.map(s => `
+        <div class="vault">
+          <div style="font-size:13.5px">${s.label}</div>
+          <div style="font-size:13.5px;font-variant-numeric:tabular-nums;color:${
+            s.budgeted && s.spent > s.budgeted ? 'var(--over)' : 'var(--text)'}">
+            ${money(s.spent)}${s.budgeted ? ' <span style="color:var(--faint)">/ ' + money(s.budgeted) + '</span>' : ''}
           </div>
-        `;
-      }).join('');
+        </div>`).join('')}
+    </div>`;
+
+  document.getElementById('back').onclick = loadTrendsList;
+}
+
+function bars(series) {
+  const W = 300, H = 130, pad = 22;
+  const max = Math.max(...series.map(s => Math.max(s.spent, s.budgeted || 0)), 1);
+  const bw = (W - pad * 2) / series.length;
+
+  const bars = series.map((s, i) => {
+    const x = pad + i * bw + bw * 0.18;
+    const w = bw * 0.64;
+    const h = (s.spent / max) * (H - 40);
+    const y = H - 20 - h;
+    const over = s.budgeted && s.spent > s.budgeted;
+    return `<rect x="${x}" y="${y}" width="${w}" height="${Math.max(h, 1)}" rx="3"
+              fill="${over ? '#B8676C' : '#45688E'}" opacity="${i === series.length - 1 ? 1 : .72}"/>
+            <text x="${x + w / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#767B82">${s.label}</text>`;
+  }).join('');
+
+  // dashed budget line, using the most recent month that has one
+  const b = [...series].reverse().find(s => s.budgeted != null && s.budgeted > 0);
+  let line = '';
+  if (b) {
+    const y = H - 20 - (b.budgeted / max) * (H - 40);
+    line = `<line x1="${pad}" x2="${W - pad}" y1="${y}" y2="${y}" stroke="#767B82"
+              stroke-width="1" stroke-dasharray="4 3" opacity=".7"/>
+            <text x="${W - pad}" y="${y - 4}" text-anchor="end" font-size="9.5" fill="#767B82">budget ${money(b.budgeted)}</text>`;
   }
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${line}${bars}</svg>`;
+}
 
-  // ===== CONNECT VIEW =====
-  document.getElementById('connect-btn').addEventListener('click', async () => {
-    const { link_token } = await apiPost({ action: 'createLinkToken' });
-    const handler = Plaid.create({
-      token: link_token,
-      onSuccess: async (public_token) => {
-        const accountName = prompt('Name this account (e.g. SoFi Checking):');
-        if (!accountName) return;
-        await apiPost({ action: 'connectAccount', publicToken: public_token, accountName });
-        alert('Account connected. It will start syncing on the next weekly run.');
-      }
-    });
-    handler.open();
-  });
+// ---------- accounts ----------
+async function loadAccounts() {
+  const el = document.getElementById('accounts-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  const accounts = await get('getAccounts');
 
-  document.getElementById('add-cat-btn').addEventListener('click', async () => {
-    const name = document.getElementById('cat-name').value.trim();
-    const amount = Number(document.getElementById('cat-amount').value);
-    if (!name || !amount) { alert('Enter a name and a budget amount.'); return; }
-    const result = await apiPost({ action: 'addCategory', category: name, defaultAmount: amount });
-    if (result.error) { alert(result.error); return; }
-    document.getElementById('cat-name').value = '';
-    document.getElementById('cat-amount').value = '';
-    alert('Category added.');
-    categories = await apiGet('getCategories');
-  });
+  let list = (accounts && accounts.length)
+    ? accounts.map(a => `
+        <div class="vault">
+          <div><div style="font-size:14px;font-weight:500">${esc(a.institution)}</div>
+          <div class="vault-sub">${a.cards.map(esc).join(' · ')}</div></div>
+        </div>`).join('')
+    : '<div class="empty" style="padding:22px">No accounts connected yet.</div>';
 
-  // ===== UTIL =====
-  function formatDate(d) {
-    const date = new Date(d);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
-  function formatAmount(n) {
-    const abs = Math.abs(n).toFixed(2);
-    return n < 0 ? '-$' + abs : '+$' + abs;
-  }
+  el.innerHTML = `
+    <div class="note">One login can cover several accounts. Both Chase cards under one Chase login count as a single connection against the 10 you have.</div>
+    <div class="section-label">Connected</div>
+    <div class="card tight">${list}</div>
+    <div class="card"><button class="btn" id="connect">Connect an account</button></div>`;
 
-  loadUncategorized();
+  document.getElementById('connect').onclick = connectAccount;
+}
+
+async function connectAccount() {
+  const r = await post({ action: 'createLinkToken' });
+  if (!r.link_token) { alert(r.error_message || r.error || 'Could not start Plaid.'); return; }
+  Plaid.create({
+    token: r.link_token,
+    onSuccess: async (public_token) => {
+      const name = prompt('Name this institution (e.g. Chase, SoFi):');
+      if (!name) return;
+      const res = await post({ action: 'connectAccount', publicToken: public_token, accountName: name });
+      if (res.error) { alert(res.error); return; }
+      await post({ action: 'forceSync' });
+      loadAccounts();
+    }
+  }).open();
+}
+
+// ---------- util ----------
+function fmtDate(d) {
+  return new Date(String(d).slice(0, 10) + 'T12:00:00')
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+loadCategorize();
 </script>
 </body>
 </html>
