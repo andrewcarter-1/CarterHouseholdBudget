@@ -53,6 +53,7 @@
   .chip.excl { color:var(--muted); font-style:italic; }
   .chip.save { background:var(--good-bg); border-color:#D3E2DA; color:#3F6B57; }
   .chip:active,.chip.sel { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .chip.sug { border-color:var(--accent); border-style:dashed; color:var(--accent); background:var(--accent-bg); }
   .chip-div { flex-basis:100%; font-size:11px; color:var(--faint); margin:6px 0 1px; }
 
   /* rows */
@@ -316,8 +317,10 @@ function renderTxns() {
 
   el.innerHTML = txns.map(t => {
     const done = !!t.category;
+    const sug = !done && t.suggested ? t.suggested : '';
     return `
-    <div class="card" data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}" data-done="${done}">
+    <div class="card" data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}" data-done="${done}"
+         ${sug ? `data-pick="${esc(sug)}"` : ''}>
       <div class="txn-head">
         <div><div class="txn-payee">${esc(t.payee)}</div>
         <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.institution)}${t.card ? ' · ' + esc(t.card) : ''}</div></div>
@@ -326,15 +329,27 @@ function renderTxns() {
       ${done
         ? `<span class="cat-badge ${typeOf[t.category] === 'Excluded' ? 'excl':''}">${esc(t.category)}</span>`
         : ''}
-      <div class="chips" style="${done ? 'display:none' : ''}">${chipsHtml}</div>
+      <div class="chips" style="${done ? 'display:none' : ''}">${
+        sug ? chipsHtml.replace(`data-c="${esc(sug)}"`, `data-c="${esc(sug)}" class-hook="sug"`) : chipsHtml
+      }</div>
       <div class="save-row" style="${done ? 'display:none' : ''}">
         <span class="split-link" style="margin-top:0">Split</span>
-        <span class="save-pick">Pick a category</span>
-        <button class="save-btn">Save</button>
+        <span class="save-pick">${sug
+          ? 'Suggested <b>' + esc(sug) + '</b>' + (t.suggestSeen > 1 ? ' · seen ' + t.suggestSeen + '×' : '')
+          : 'Pick a category'}</span>
+        <button class="save-btn ${sug ? 'ready':''}">Save</button>
       </div>
       <div class="split-box" style="display:none" data-opts='${optsHtml.replace(/'/g, "&#39;")}'></div>
     </div>`;
   }).join('');
+
+  // highlight any pre-selected suggestion
+  el.querySelectorAll('.card').forEach(card => {
+    const pick = card.dataset.pick;
+    if (!pick) return;
+    const chip = [...card.querySelectorAll('.chip')].find(c => c.dataset.c === pick);
+    if (chip) chip.classList.add('sug');
+  });
 
   // tapping the badge on a categorized row opens the chips to change it
   el.querySelectorAll('.cat-badge').forEach(badge => badge.onclick = () => {
@@ -347,7 +362,7 @@ function renderTxns() {
   // selecting a chip only stages the choice; nothing saves until Save is tapped
   el.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
     const card = chip.closest('.card');
-    card.querySelectorAll('.chip').forEach(c => c.classList.remove('sel'));
+    card.querySelectorAll('.chip').forEach(c => c.classList.remove('sel','sug'));
     chip.classList.add('sel');
     card.dataset.pick = chip.dataset.c;
     card.querySelector('.save-pick').innerHTML = '<b>' + esc(chip.dataset.c) + '</b>';
@@ -730,9 +745,11 @@ async function loadAccounts() {
   const ruleList = (rules && rules.length)
     ? rules.map(r => `<div class="lrow">
         <div style="min-width:0;flex:1"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.example)}</div>
-        <div class="sb">used ${r.count}×</div></div>
+        <div class="sb">${r.auto
+          ? 'files automatically · ' + r.agreed + ' of ' + r.total
+          : 'suggests only · needs ' + Math.max(0, 2 - r.total) + ' more'}</div></div>
         <div style="display:flex;align-items:center;gap:8px">
-          <span class="rule-cat">${esc(r.category)}</span>
+          <span class="rule-cat" style="${r.auto ? '' : 'opacity:.6'}">${esc(r.category)}</span>
           <span class="rm" data-m="${esc(r.match)}" style="color:var(--faint);cursor:pointer;font-size:17px">×</span>
         </div></div>`).join('')
     : '<div class="empty" style="padding:22px">No rules yet. Categorize a few transactions and they build themselves.</div>';
@@ -744,7 +761,7 @@ async function loadAccounts() {
     <div class="card"><button class="btn" id="connect">Connect an account</button></div>
 
     <div class="section-label">Merchant memory<span id="apply-rules">apply to queue</span></div>
-    <div class="note">Every time you categorize something, the payee is remembered. Next sync, anything matching skips the queue and files itself.</div>
+    <div class="note">Tag a payee once and it only suggests, shown as a dashed chip you still have to save. Tag it the same way twice and it starts filing itself on sync. Change your mind and the streak resets.</div>
     <div class="card tight">${ruleList}</div>`;
 
   document.getElementById('connect').onclick = connectAccount;
