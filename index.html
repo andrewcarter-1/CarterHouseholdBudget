@@ -115,6 +115,30 @@
   .split-foot .go { background:var(--accent); color:#fff; border-color:var(--accent); }
   .rule-cat { font-size:12.5px; color:var(--accent); background:var(--accent-bg); padding:3px 8px; border-radius:6px; }
 
+  /* filter bar */
+  .filters { background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+    padding:10px; margin-bottom:10px; }
+  .seg { display:flex; gap:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:8px; }
+  .seg button { flex:1; padding:7px 0; background:var(--surface-2); border:none; font-size:12.5px;
+    color:var(--muted); cursor:pointer; font-family:inherit; border-right:1px solid var(--border); }
+  .seg button:last-child { border-right:none; }
+  .seg button.on { background:var(--accent); color:#fff; font-weight:500; }
+  .frow { display:flex; gap:6px; }
+  .frow select, .frow input { margin:0; font-size:12.5px; padding:7px 8px; }
+  .fcount { font-size:11.5px; color:var(--faint); margin-top:7px; }
+
+  .cat-badge { font-size:12px; color:var(--accent); background:var(--accent-bg);
+    padding:3px 9px; border-radius:6px; cursor:pointer; display:inline-block; margin-top:9px; }
+  .cat-badge.excl { color:var(--muted); background:#F0EFEC; font-style:italic; }
+
+  .save-row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; }
+  .save-pick { font-size:12.5px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .save-pick b { color:var(--text); font-weight:600; }
+  .save-btn { flex:none; font-size:13px; font-weight:500; padding:8px 16px; border-radius:8px;
+    border:1px solid var(--border); background:var(--surface-2); color:var(--faint);
+    cursor:not-allowed; font-family:inherit; }
+  .save-btn.ready { background:var(--accent); border-color:var(--accent); color:#fff; cursor:pointer; }
+
   /* sparkline grid */
   .spark-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); cursor:pointer; }
   .spark-row:last-child { border-bottom:none; }
@@ -131,7 +155,30 @@
     <div class="sub" id="subtitle">Loading</div>
     <button class="sync-btn" id="sync-btn">Sync</button>
   </header>
-  <section class="view active" id="view-categorize"><div id="txn-list"></div></section>
+  <section class="view active" id="view-categorize">
+    <div class="filters">
+      <div class="seg" id="seg-status">
+        <button class="on" data-s="todo">Needs category</button>
+        <button data-s="done">Categorized</button>
+        <button data-s="all">All</button>
+      </div>
+      <div class="frow">
+        <select id="f-account"><option value="all">All accounts</option></select>
+        <select id="f-sort">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="largest">Largest</option>
+          <option value="smallest">Smallest</option>
+        </select>
+      </div>
+      <div class="frow" style="margin-top:6px">
+        <select id="f-month"><option value="all">All months</option></select>
+        <input type="text" id="f-search" placeholder="Search payee">
+      </div>
+      <div class="fcount" id="f-count"></div>
+    </div>
+    <div id="txn-list"></div>
+  </section>
   <section class="view" id="view-budget"><div id="budget-body"></div></section>
   <section class="view" id="view-trends"><div id="trends-body"></div></section>
   <section class="view" id="view-accounts"><div id="accounts-body"></div></section>
@@ -177,7 +224,7 @@ document.getElementById('sync-btn').onclick = async () => {
   btn.disabled = true; btn.textContent = 'Syncing';
   const r = await post({ action:'forceSync' });
   btn.disabled = false; btn.textContent = 'Sync';
-  trendCache = null;
+  trendCache = null; filtersLoaded = false;
   if (r.error) { alert(r.error); return; }
   if (r.errors && r.errors.length) alert('Trouble with:\n' + r.errors.join('\n'));
   else if (r.auto > 0) {
@@ -189,62 +236,148 @@ document.getElementById('sync-btn').onclick = async () => {
 };
 
 // ============ CATEGORIZE ============
+const filters = { status:'todo', account:'all', month:'all', sort:'newest', search:'' };
+let totalMatching = 0;
+
 async function loadCategorize() {
-  cats = await get('getCategories');
-  txns = await get('getUncategorized');
+  if (!cats.length) cats = await get('getCategories');
+  const res = await get('getTransactions', filters);
+  txns = res.rows || [];
+  totalMatching = res.total || 0;
   renderTxns();
+  loadFilterOptions();
 }
+
+let filtersLoaded = false;
+async function loadFilterOptions() {
+  if (filtersLoaded) return;
+  const o = await get('getFilterOptions');
+  const acc = document.getElementById('f-account');
+  (o.accounts || []).forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a; opt.textContent = a.replace(/ · $/, '');
+    acc.appendChild(opt);
+  });
+  const mon = document.getElementById('f-month');
+  (o.months || []).forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    mon.appendChild(opt);
+  });
+  filtersLoaded = true;
+}
+
+document.querySelectorAll('#seg-status button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#seg-status button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); filters.status = b.dataset.s; loadCategorize();
+});
+['f-account','f-sort','f-month'].forEach(id =>
+  document.getElementById(id).onchange = e => {
+    filters[id.replace('f-','') === 'account' ? 'account' : id.replace('f-','')] = e.target.value;
+    loadCategorize();
+  });
+let searchTimer;
+document.getElementById('f-search').oninput = e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { filters.search = e.target.value.trim(); loadCategorize(); }, 350);
+};
+
 function renderTxns() {
   const el = document.getElementById('txn-list');
-  document.getElementById('subtitle').textContent = txns.length ? txns.length + ' to categorize' : 'All caught up';
-  if (!txns.length) { el.innerHTML = '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>'; return; }
+  const todo = filters.status === 'todo';
+  document.getElementById('subtitle').textContent =
+    todo ? (totalMatching ? totalMatching + ' to categorize' : 'All caught up') : totalMatching + ' transactions';
+  document.getElementById('f-count').textContent =
+    totalMatching > txns.length ? 'Showing ' + txns.length + ' of ' + totalMatching : '';
 
-  // Most-used categories first, so the common ones are always in reach.
+  if (!txns.length) {
+    el.innerHTML = todo
+      ? '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>'
+      : '<div class="empty"><b>No matches</b>Try widening the filters.</div>';
+    return;
+  }
+
   const ordered = [...cats].sort((a,b) => (b.used||0) - (a.used||0));
   const chipsHtml = ordered.map(c => {
     const cls = c.type === 'Excluded' ? 'chip excl' : (c.type === 'Savings' ? 'chip save' : 'chip');
     return `<div class="${cls}" data-c="${esc(c.name)}">${esc(c.name)}</div>`;
   }).join('');
   const optsHtml = ordered.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  const typeOf = {}; cats.forEach(c => typeOf[c.name] = c.type);
 
-  el.innerHTML = txns.map(t => `
-    <div class="card" data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}">
+  el.innerHTML = txns.map(t => {
+    const done = !!t.category;
+    return `
+    <div class="card" data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}" data-done="${done}">
       <div class="txn-head">
         <div><div class="txn-payee">${esc(t.payee)}</div>
-        <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.card || t.institution)}</div></div>
+        <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.institution)}${t.card ? ' · ' + esc(t.card) : ''}</div></div>
         <div class="txn-amt ${t.amount > 0 ? 'in':''}">${t.amount > 0 ? '+':''}${money(t.amount)}</div>
       </div>
-      <div class="chips">${chipsHtml}</div>
-      <span class="split-link">Split across categories</span>
+      ${done
+        ? `<span class="cat-badge ${typeOf[t.category] === 'Excluded' ? 'excl':''}">${esc(t.category)}</span>`
+        : ''}
+      <div class="chips" style="${done ? 'display:none' : ''}">${chipsHtml}</div>
+      <div class="save-row" style="${done ? 'display:none' : ''}">
+        <span class="split-link" style="margin-top:0">Split</span>
+        <span class="save-pick">Pick a category</span>
+        <button class="save-btn">Save</button>
+      </div>
       <div class="split-box" style="display:none" data-opts='${optsHtml.replace(/'/g, "&#39;")}'></div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
-  el.querySelectorAll('.chip').forEach(chip => chip.onclick = async () => {
-    const card = chip.closest('.card'); const id = card.dataset.id;
+  // tapping the badge on a categorized row opens the chips to change it
+  el.querySelectorAll('.cat-badge').forEach(badge => badge.onclick = () => {
+    const card = badge.closest('.card');
+    card.querySelector('.chips').style.display = '';
+    card.querySelector('.save-row').style.display = '';
+    badge.style.display = 'none';
+  });
+
+  // selecting a chip only stages the choice; nothing saves until Save is tapped
+  el.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
+    const card = chip.closest('.card');
+    card.querySelectorAll('.chip').forEach(c => c.classList.remove('sel'));
     chip.classList.add('sel');
-    card.querySelectorAll('.chip').forEach(c => c.style.pointerEvents = 'none');
-    await post({ action:'saveCategory', transactionId:id, category:chip.dataset.c });
+    card.dataset.pick = chip.dataset.c;
+    card.querySelector('.save-pick').innerHTML = '<b>' + esc(chip.dataset.c) + '</b>';
+    card.querySelector('.save-btn').classList.add('ready');
+  });
+
+  el.querySelectorAll('.save-btn').forEach(btn => btn.onclick = async () => {
+    const card = btn.closest('.card');
+    const pick = card.dataset.pick;
+    if (!pick) return;
+    btn.textContent = 'Saving'; btn.classList.remove('ready');
+    const id = card.dataset.id;
+    await post({ action:'saveCategory', transactionId:id, category:pick });
     trendCache = null;
     card.style.opacity = '.35';
-    setTimeout(() => { txns = txns.filter(t => t.transactionId !== id); renderTxns(); }, 220);
+    setTimeout(() => {
+      if (filters.status === 'todo') { txns = txns.filter(t => t.transactionId !== id); totalMatching--; renderTxns(); }
+      else loadCategorize();
+    }, 220);
   });
 
   el.querySelectorAll('.split-link').forEach(link => link.onclick = () => {
     const card = link.closest('.card');
     const box = card.querySelector('.split-box');
-    if (box.style.display === 'none') {
-      openSplit(card, box);
-      link.textContent = 'Cancel split';
-    } else {
+    if (box.style.display === 'none') { openSplit(card, box); link.textContent = 'Cancel'; }
+    else {
       box.style.display = 'none'; box.innerHTML = '';
       card.querySelector('.chips').style.display = '';
-      link.textContent = 'Split across categories';
+      card.querySelector('.save-pick').style.display = '';
+      card.querySelector('.save-btn').style.display = '';
+      link.textContent = 'Split';
     }
   });
 }
 
 function openSplit(card, box) {
   card.querySelector('.chips').style.display = 'none';
+  card.querySelector('.save-pick').style.display = 'none';
+  card.querySelector('.save-btn').style.display = 'none';
   box.style.display = 'block';
   const total = Number(card.dataset.amt);
   const opts = box.dataset.opts;
