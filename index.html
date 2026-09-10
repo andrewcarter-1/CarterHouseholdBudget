@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Carter Household Budget</title>
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --surface: #FAFAF9;
+    --border: #E5E7EB;
+    --text: #1A1A1A;
+    --muted: #6B7280;
+    --accent: #2D5BFF;
+    --accent-soft: #EEF1FF;
+    --good: #16A34A;
+    --bad: #DC2626;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Inter", BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    padding-bottom: 84px;
+  }
+  header {
+    padding: 24px 20px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 2px;
+  }
+  header p {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 0;
+  }
+  .view { display: none; padding: 16px 20px 8px; }
+  .view.active { display: block; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .txn-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .txn-payee { font-size: 15px; font-weight: 500; }
+  .txn-meta { font-size: 12px; color: var(--muted); }
+  .txn-amount { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .txn-amount.neg { color: var(--text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
+
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty strong { display: block; color: var(--text); font-size: 16px; margin-bottom: 4px; }
+
+  .budget-row {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .budget-row:last-child { border-bottom: none; }
+  .budget-top { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
+  .budget-cat { font-weight: 500; }
+  .budget-nums { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar-track { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; background: var(--good); }
+  .bar-fill.over { background: var(--bad); }
+
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 13px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: center;
+  }
+  .btn.secondary {
+    background: white;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 15px;
+    margin-bottom: 10px;
+    font-family: inherit;
+  }
+  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+
+  nav {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    max-width: 480px;
+    margin: 0 auto;
+    background: white;
+    border-top: 1px solid var(--border);
+    display: flex;
+  }
+  nav button {
+    flex: 1;
+    padding: 14px 0 10px;
+    background: none;
+    border: none;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  nav button.active { color: var(--accent); font-weight: 600; }
+
+  .accounts-list { font-size: 14px; color: var(--muted); margin: 10px 0; }
+  .accounts-list div { padding: 6px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Carter Household Budget</h1>
+    <p id="subtitle">Loading&hellip;</p>
+  </header>
+
+  <!-- CATEGORIZE VIEW -->
+  <section class="view active" id="view-categorize">
+    <div id="txn-list"></div>
+  </section>
+
+  <!-- BUDGET VIEW -->
+  <section class="view" id="view-budget">
+    <div class="card" id="budget-list"></div>
+  </section>
+
+  <!-- CONNECT VIEW -->
+  <section class="view" id="view-connect">
+    <div class="card">
+      <p style="margin-top:0; font-size:14px; color:var(--muted);">
+        Connected accounts sync automatically each week. Add a new one below.
+      </p>
+      <div class="accounts-list" id="accounts-list"></div>
+      <button class="btn" id="connect-btn">Connect a new account</button>
+    </div>
+    <div class="card">
+      <p style="margin-top:0; font-size:14px; font-weight:500;">Add a category</p>
+      <label for="cat-name">Category name</label>
+      <input type="text" id="cat-name" placeholder="e.g. Subscriptions">
+      <label for="cat-amount">Monthly budget amount</label>
+      <input type="number" id="cat-amount" placeholder="0">
+      <button class="btn secondary" id="add-cat-btn">Add category</button>
+    </div>
+  </section>
+</div>
+
+<nav>
+  <button class="active" data-view="categorize">Categorize</button>
+  <button data-view="budget">Budget</button>
+  <button data-view="connect">Connect</button>
+</nav>
+
+<script>
+  // ===== CONFIG =====
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
+
+  let categories = [];
+  let uncategorized = [];
+
+  // ===== NAVIGATION =====
+  document.querySelectorAll('nav button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('view-' + btn.dataset.view).classList.add('active');
+      if (btn.dataset.view === 'budget') loadBudget();
+    });
+  });
+
+  // ===== API HELPERS =====
+  async function apiGet(action, params = {}) {
+    const url = new URL(API_URL);
+    url.searchParams.set('action', action);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const res = await fetch(url);
+    return res.json();
+  }
+
+  async function apiPost(body) {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    return res.json();
+  }
+
+  // ===== CATEGORIZE VIEW =====
+  async function loadUncategorized() {
+    document.getElementById('subtitle').textContent = 'Loading transactions…';
+    categories = await apiGet('getCategories');
+    uncategorized = await apiGet('getUncategorized');
+    renderTransactions();
+  }
+
+  function renderTransactions() {
+    const list = document.getElementById('txn-list');
+    document.getElementById('subtitle').textContent =
+      uncategorized.length ? uncategorized.length + ' to categorize' : 'All caught up';
+
+    if (!uncategorized.length) {
+      list.innerHTML = '<div class="empty"><strong>Nothing to categorize</strong>New transactions show up here after each weekly sync.</div>';
+      return;
+    }
+
+    list.innerHTML = uncategorized.map(txn => `
+      <div class="card" data-id="${txn.transactionId}">
+        <div class="txn-row">
+          <div>
+            <div class="txn-payee">${txn.payee}</div>
+            <div class="txn-meta">${formatDate(txn.date)} · ${txn.account}</div>
+          </div>
+          <div class="txn-amount">${formatAmount(txn.amount)}</div>
+        </div>
+        <div class="chips">
+          ${categories.map(c => `<div class="chip" data-cat="${c}">${c}</div>`).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', async () => {
+        const card = chip.closest('.card');
+        const transactionId = card.dataset.id;
+        chip.textContent = chip.textContent + ' ✓';
+        card.querySelectorAll('.chip').forEach(c => c.style.pointerEvents = 'none');
+        chip.classList.add('selected');
+        await apiPost({ action: 'saveCategory', transactionId, category: chip.dataset.cat });
+        card.style.opacity = '0.4';
+        setTimeout(() => {
+          uncategorized = uncategorized.filter(t => t.transactionId !== transactionId);
+          renderTransactions();
+        }, 300);
+      });
+    });
+  }
+
+  // ===== BUDGET VIEW =====
+  async function loadBudget() {
+    const now = new Date();
+    const month = now.toLocaleString('en-US', { month: 'long' });
+    const year = now.getFullYear();
+    const rows = await apiGet('getBudgetSummary', { month, year });
+    renderBudget(rows, month, year);
+  }
+
+  function renderBudget(rows, month, year) {
+    const container = document.getElementById('budget-list');
+    if (!Array.isArray(rows) || rows.length < 2) {
+      container.innerHTML = '<div class="empty"><strong>No budget tab yet</strong>Run setupMonthlyTab for ' + month + ' ' + year + ' in Apps Script.</div>';
+      return;
+    }
+    const body = rows.slice(1); // skip header row
+    container.innerHTML = `<p style="margin:0 0 8px; font-size:13px; color:var(--muted);">${month} ${year}</p>` +
+      body.map(row => {
+        const [cat, budgeted, spent, remaining] = row;
+        const spentAbs = Math.abs(spent || 0);
+        const budgetNum = Number(budgeted) || 0;
+        const pct = budgetNum > 0 ? Math.min(100, (spentAbs / budgetNum) * 100) : 0;
+        const over = budgetNum > 0 && spentAbs > budgetNum;
+        return `
+          <div class="budget-row">
+            <div class="budget-top">
+              <span class="budget-cat">${cat}</span>
+              <span class="budget-nums">$${spentAbs.toFixed(0)} of $${budgetNum.toFixed(0)}</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill ${over ? 'over' : ''}" style="width:${pct}%"></div></div>
+          </div>
+        `;
+      }).join('');
+  }
+
+  // ===== CONNECT VIEW =====
+  document.getElementById('connect-btn').addEventListener('click', async () => {
+    const { link_token } = await apiPost({ action: 'createLinkToken' });
+    const handler = Plaid.create({
+      token: link_token,
+      onSuccess: async (public_token) => {
+        const accountName = prompt('Name this account (e.g. SoFi Checking):');
+        if (!accountName) return;
+        await apiPost({ action: 'connectAccount', publicToken: public_token, accountName });
+        alert('Account connected. It will start syncing on the next weekly run.');
+      }
+    });
+    handler.open();
+  });
+
+  document.getElementById('add-cat-btn').addEventListener('click', async () => {
+    const name = document.getElementById('cat-name').value.trim();
+    const amount = Number(document.getElementById('cat-amount').value);
+    if (!name || !amount) { alert('Enter a name and a budget amount.'); return; }
+    const result = await apiPost({ action: 'addCategory', category: name, defaultAmount: amount });
+    if (result.error) { alert(result.error); return; }
+    document.getElementById('cat-name').value = '';
+    document.getElementById('cat-amount').value = '';
+    alert('Category added.');
+    categories = await apiGet('getCategories');
+  });
+
+  // ===== UTIL =====
+  function formatDate(d) {
+    const date = new Date(d);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function formatAmount(n) {
+    const abs = Math.abs(n).toFixed(2);
+    return n < 0 ? '-$' + abs : '+$' + abs;
+  }
+
+  loadUncategorized();
+</script>
+</body>
+</html>
