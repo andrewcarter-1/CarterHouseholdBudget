@@ -53,6 +53,7 @@
   .chip.excl { color:var(--muted); font-style:italic; }
   .chip.save { background:var(--good-bg); border-color:#D3E2DA; color:#3F6B57; }
   .chip:active,.chip.sel { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .chip-div { flex-basis:100%; font-size:11px; color:var(--faint); margin:6px 0 1px; }
 
   /* rows */
   .brow { padding:9px 0; border-bottom:1px solid var(--border); cursor:pointer; }
@@ -297,11 +298,19 @@ function renderTxns() {
     return;
   }
 
-  const ordered = [...cats].sort((a,b) => (b.used||0) - (a.used||0));
-  const chipsHtml = ordered.map(c => {
-    const cls = c.type === 'Excluded' ? 'chip excl' : (c.type === 'Savings' ? 'chip save' : 'chip');
-    return `<div class="${cls}" data-c="${esc(c.name)}">${esc(c.name)}</div>`;
-  }).join('');
+  // Grouped by type so the colors read as sections. Within each group,
+  // most-used first so common picks stay near the top.
+  const byUse = (a,b) => (b.used||0) - (a.used||0);
+  const expense  = cats.filter(c => c.type === 'Expense').sort(byUse);
+  const savings  = cats.filter(c => c.type === 'Savings').sort(byUse);
+  const excluded = cats.filter(c => c.type === 'Excluded').sort(byUse);
+  const ordered = [...expense, ...savings, ...excluded];
+
+  const chipFor = (c, cls) => `<div class="chip ${cls}" data-c="${esc(c.name)}">${esc(c.name)}</div>`;
+  let chipsHtml = expense.map(c => chipFor(c, '')).join('');
+  if (savings.length)  chipsHtml += `<div class="chip-div">Savings envelopes</div>` + savings.map(c => chipFor(c, 'save')).join('');
+  if (excluded.length) chipsHtml += `<div class="chip-div">Not budgeted</div>` + excluded.map(c => chipFor(c, 'excl')).join('');
+
   const optsHtml = ordered.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
   const typeOf = {}; cats.forEach(c => typeOf[c.name] = c.type);
 
