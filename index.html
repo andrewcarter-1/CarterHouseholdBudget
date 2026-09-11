@@ -870,13 +870,17 @@ async function loadFinances() {
     html += `<div class="section-label">Payments due</div><div class="card tight">` +
       soon.map(a => {
         const days = Math.ceil((new Date(a.due + 'T12:00:00') - new Date()) / 86400000);
-        const urgent = days <= 7;
-        return `<div class="lrow">
+        const urgent = days <= 7 && days >= 0;
+        // Cards owe the statement balance; loans owe a scheduled payment.
+        const owed = a.statement != null ? a.statement : a.scheduled;
+        const sub = [fmtDue(a.due)];
+        sub.push(days >= 0 ? 'in ' + days + 'd' : Math.abs(days) + 'd ago');
+        if (a.type === 'loan') sub.push('balance ' + money(a.balance));
+        return `<div class="lrow acct-row" data-id="${esc(a.id)}">
           <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
-            <div class="sb">${fmtDue(a.due)}${days >= 0 ? ' · ' + days + 'd' : ' · overdue'}${
-              a.minPayment ? ' · min ' + money(a.minPayment) : ''}</div></div>
+            <div class="sb">${sub.join(' · ')}</div></div>
           <div class="vl" style="color:${urgent ? 'var(--over)':'var(--text)'}">${
-            a.statement != null ? money(a.statement) : money(a.balance)}</div>
+            owed != null ? money(owed) : '—'}</div>
         </div>`;
       }).join('') + `</div>`;
   }
@@ -890,7 +894,7 @@ async function loadFinances() {
         else if (a.available != null && a.type === 'depository') sub.push(money(a.available) + ' available');
         if (a.apr) sub.push(a.apr + '% APR');
         if (a.statement != null) sub.push('stmt ' + money(a.statement));
-        return `<div class="lrow acct-row" data-id="${esc(a.id)}" data-name="${esc(a.name)}">
+        return `<div class="lrow acct-row" data-id="${esc(a.id)}">
           <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
             ${sub.length ? `<div class="sb">${sub.join(' · ')}</div>` : ''}</div>
           <div class="vl" style="color:${isDebt && a.balance > 0 ? 'var(--over)':'var(--text)'}">${money(a.balance)}</div>
@@ -904,13 +908,206 @@ async function loadFinances() {
 
   el.innerHTML = html;
   document.getElementById('fin-refresh').onclick = doRefreshFinances;
-  el.querySelectorAll('.acct-row').forEach(r => r.onclick = async () => {
-    const nu = prompt('Rename this account', r.dataset.name);
+  el.querySelectorAll('.acct-row').forEach(r => r.onclick = () => openAccount(r.dataset.id));
+}
+
+// ---- account detail ----
+async function openAccount(accountId) {
+  const el = document.getElementById('finances-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  const a = await get('getAccountDetail', { accountId: accountId });
+  if (a.error) { el.innerHTML = '<div class="empty"><b>Not found</b>' + esc(a.error) + '</div>'; return; }
+
+  const isDebt = a.type === 'credit' || a.type === 'loan';
+
+  // Payoff progress against the original loan amount.
+  let payoffBlock = '';
+  if (a.original) {
+    const pct = a.paidPct || 0;
+    payoffBlock = `
+      <div class="card">
+        <div class="brow-top"><span class="brow-cat">Paid down</span>
+          <span class="brow-num"><b>${money(a.paid)}</b> of ${money(a.original)}</span></div>
+        <div class="track"><div class="fill" style="width:${pct}%"></div></div>
+        <div class="fcount" style="margin-top:6px">${pct.toFixed(1)}% retired · ${money(a.balance)} remaining</div>
+      </div>`;
+  } else if (a.type === 'loan') {
+    payoffBlock = `<div class="card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
+        Add the original loan amount to track payoff progress.</div>
+      <button class="btn ghost" id="set-orig">Set original balance</button></div>`;
+  }
+
+  let ratioBlock = '';
+  if (a.ratio != null) {
+    const pct = Math.min(100, a.ratio * 100);
+    const hot = pct > 80;
+    ratioBlock = `
+      <div class="card">
+        <div class="brow-top"><span class="brow-cat">${a.ratioLabel}</span>
+          <span class="brow-num"><b>${pct.toFixed(1)}%</b> of ${money(a.ratioBase)}</span></div>
+        <div class="track"><div class="fill ${hot ? 'over' : (pct > 60 ? 'warn':'')}" style="width:${pct}%"></div></div>
+        ${a.equity != null ? `<div class="fcount" style="margin-top:6px">Equity ${money(a.equity)}</div>` : ''}
+      </div>`;
+  } else if (a.type === 'loan') {
+    ratioBlock = `<div class="card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
+        Add the property or asset value to see loan to value and equity.</div>
+      <button class="btn ghost" id="set-ref">Set value</button></div>`;
+  }
+
+  const rows = [];
+  if (a.available != null && a.type === 'depository') rows.push(['Available', money(a.available)]);
+  if (a.limit) rows.push(['Credit limit', money(a.limit)]);
+  if (a.limit) rows.push(['Available credit', money(a.limit - a.balance)]);
+  if (a.statement != null) rows.push(['Statement balance', money(a.statement)]);
+  if (a.scheduled != null) rows.push(['Scheduled payment', money(a.scheduled)]);
+  if (a.due) rows.push(['Next due', fmtDue(a.due)]);
+  if (a.apr) rows.push(['APR', a.apr + '%']);
+  if (a.lastPayment != null) rows.push(['Last payment', money(a.lastPayment)]);
+  rows.push(['Account', a.plaidName + (a.mask ? ' ••' + a.mask : '')]);
+
+  // Everything else Plaid returns for this liability.
+  const detailRows = a.raw ? flattenLiability(a.raw) : [];
+
+  let changeLine = '';
+  if (a.change != null && a.changeDays) {
+    const down = a.change < 0;
+    const good = isDebt ? down : !down;
+    changeLine = `<div class="fcount" style="text-align:center;margin-top:6px;color:${
+      good ? 'var(--good)' : 'var(--muted)'}">${down ? '−' : '+'}${money(a.change)} over ${a.changeDays} days</div>`;
+  }
+
+  el.innerHTML = `
+    <span class="back" id="back-fin">← All accounts</span>
+    <div class="card">
+      <div style="font-size:12.5px;color:var(--muted)">${esc(a.institution)}</div>
+      <div style="font-size:22px;font-weight:620;letter-spacing:-.02em;margin:2px 0 10px">${money(a.balance)}</div>
+      <div style="font-size:15px;font-weight:500">${esc(a.name)}
+        <span class="clear-cat" id="rename-acct">rename</span></div>
+      ${a.series.length > 1 ? balanceChart(a.series, isDebt) : ''}
+      ${a.series.length > 1 ? changeLine :
+        '<div class="fcount" style="text-align:center;margin-top:10px">History starts building from the first refresh.</div>'}
+    </div>
+    ${payoffBlock}
+    ${ratioBlock}
+    <div class="card tight">${rows.map(r => `
+      <div class="lrow"><div class="nm" style="font-weight:400">${r[0]}</div>
+        <div class="vl" style="font-size:14px">${r[1]}</div></div>`).join('')}</div>
+    ${detailRows.length ? `<div class="section-label">Loan details</div>
+      <div class="card tight">${detailRows.map(r => `
+        <div class="lrow"><div class="nm" style="font-weight:400">${esc(r[0])}</div>
+          <div class="vl" style="font-size:14px;text-align:right">${esc(r[1])}</div></div>`).join('')}</div>` : ''}`;
+
+  document.getElementById('back-fin').onclick = loadFinances;
+  document.getElementById('rename-acct').onclick = async (ev) => {
+    ev.stopPropagation();
+    const nu = prompt('Rename this account', a.name);
     if (nu === null) return;
-    await post({ action:'renameAccount', accountId:r.dataset.id, displayName:nu.trim() });
+    await post({ action:'renameAccount', accountId:a.id, displayName:nu.trim() });
     filtersLoaded = false;
-    loadFinances();
+    openAccount(accountId);
+  };
+  const sr = document.getElementById('set-ref');
+  if (sr) sr.onclick = async () => {
+    const v = prompt('Estimated property or asset value', a.refValue || '');
+    if (v === null) return;
+    await post({ action:'setRefValue', accountId:a.id, value: v.replace(/[^0-9.]/g,'') });
+    openAccount(accountId);
+  };
+  const so = document.getElementById('set-orig');
+  if (so) so.onclick = async () => {
+    const v = prompt('Original loan amount', a.original || '');
+    if (v === null) return;
+    await post({ action:'setOriginal', accountId:a.id, value: v.replace(/[^0-9.]/g,'') });
+    openAccount(accountId);
+  };
+}
+
+// Turns Plaid's liability object into readable label/value pairs.
+function flattenLiability(L) {
+  const MONEY = ['origination_principal_amount','escrow_balance','current_late_fee','past_due_amount',
+    'ytd_interest_paid','ytd_principal_paid','next_monthly_payment','last_payment_amount',
+    'minimum_payment_amount','last_statement_balance','outstanding_interest_amount',
+    'expected_payoff_amount','original_principal_amount'];
+  const DATES = ['origination_date','maturity_date','next_payment_due_date','last_payment_date',
+    'last_statement_issue_date','expected_payoff_date','loan_end_date'];
+  const LABELS = {
+    origination_principal_amount:'Original amount', origination_date:'Originated',
+    maturity_date:'Matures', loan_term:'Term', loan_type_description:'Loan type',
+    escrow_balance:'Escrow balance', has_pmi:'PMI', has_prepayment_penalty:'Prepayment penalty',
+    ytd_interest_paid:'Interest paid YTD', ytd_principal_paid:'Principal paid YTD',
+    current_late_fee:'Late fee', past_due_amount:'Past due',
+    next_monthly_payment:'Monthly payment', next_payment_due_date:'Next due',
+    last_payment_amount:'Last payment', last_payment_date:'Last paid',
+    interest_rate:'Interest rate', property_address:'Property',
+    account_number:'Account number', is_overdue:'Overdue',
+    outstanding_interest_amount:'Accrued interest', expected_payoff_amount:'Payoff amount',
+    expected_payoff_date:'Payoff date', repayment_plan:'Repayment plan',
+    loan_status:'Status', guarantor:'Guarantor', servicer_address:'Servicer',
+    disbursement_dates:'Disbursed', pslf_status:'PSLF', sequence_number:'Sequence',
+    last_statement_balance:'Statement balance', last_statement_issue_date:'Statement date',
+    minimum_payment_amount:'Minimum payment', aprs:'APRs'
+  };
+  const SKIP = { account_id:1, aprs:1, account_number:1 };
+
+  const fmtMoney = v => '$' + Number(v).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
+  const out = [];
+
+  Object.keys(L).forEach(k => {
+    if (SKIP[k]) return;
+    let v = L[k];
+    if (v === null || v === undefined || v === '') return;
+
+    if (k === 'interest_rate' && typeof v === 'object') {
+      if (v.percentage != null) out.push(['Interest rate', v.percentage + '%' + (v.type ? ' (' + String(v.type).replace(/_/g,' ') + ')' : '')]);
+      return;
+    }
+    if (k === 'repayment_plan' && typeof v === 'object') {
+      out.push(['Repayment plan', v.description || v.type || '']); return;
+    }
+    if (k === 'loan_status' && typeof v === 'object') {
+      out.push(['Status', String(v.type || '').replace(/_/g,' ')]); return;
+    }
+    if (k === 'property_address' && typeof v === 'object') {
+      const p = [v.street, v.city, v.region, v.postal_code].filter(Boolean).join(', ');
+      if (p) out.push(['Property', p]);
+      return;
+    }
+    if (typeof v === 'object') return;   // anything else nested, skip
+
+    const label = LABELS[k] || k.replace(/_/g,' ').replace(/^./, s => s.toUpperCase());
+    if (typeof v === 'boolean') v = v ? 'Yes' : 'No';
+    else if (MONEY.indexOf(k) !== -1) v = fmtMoney(v);
+    else if (DATES.indexOf(k) !== -1) v = String(v).slice(0,10);
+    else if (k === 'loan_term') v = String(v).replace(/_/g,' ');
+    out.push([label, String(v)]);
   });
+
+  return out;
+}
+
+function balanceChart(series, isDebt) {
+  const W = 320, H = 110, pad = 8;
+  const vals = series.map(s => s.balance);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = (max - min) || Math.max(max * 0.02, 1);
+  const x = i => pad + (i / Math.max(series.length - 1, 1)) * (W - pad * 2);
+  const y = v => H - 18 - ((v - min + span * 0.1) / (span * 1.2)) * (H - 30);
+
+  const pts = series.map((s, i) => x(i) + ',' + y(s.balance)).join(' ');
+  const area = `${pad},${H-18} ${pts} ${x(series.length-1)},${H-18}`;
+  const down = vals[vals.length-1] < vals[0];
+  const color = isDebt ? (down ? '#5D9078' : '#B8676C') : (down ? '#B8676C' : '#5D9078');
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="margin-top:12px">
+    <polygon points="${area}" fill="${color}" opacity=".08"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${x(series.length-1)}" cy="${y(vals[vals.length-1])}" r="3.5" fill="${color}"/>
+    <text x="${pad}" y="${H-4}" font-size="9.5" fill="#9BA0A6">${series[0].date.slice(5)}</text>
+    <text x="${W-pad}" y="${H-4}" text-anchor="end" font-size="9.5" fill="#9BA0A6">${series[series.length-1].date.slice(5)}</text>
+  </svg>`;
 }
 
 async function doRefreshFinances() {
