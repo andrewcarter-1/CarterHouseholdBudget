@@ -826,11 +826,23 @@ async function loadAccounts() {
   el.innerHTML = '<div class="empty">Loading</div>';
   const accounts = await get('getAccounts');
   const rules = await get('getRules');
+  const institutions = await get('getInstitutions');
 
   const list = (accounts && accounts.length)
-    ? accounts.map(a => `<div class="lrow"><div><div class="nm">${esc(a.institution)}</div>
-        <div class="sb">${a.cards.map(esc).join(' · ')}</div></div></div>`).join('')
+    ? accounts.map(a => `<div class="lrow">
+        <div style="min-width:0;flex:1"><div class="nm">${esc(a.institution)}</div>
+        <div class="sb">${a.cards.map(esc).join(' · ')}</div></div>
+        <span class="reauth" data-i="${esc(a.institution)}"
+          style="font-size:12px;color:var(--accent);cursor:pointer;flex:none">Re-authorize</span>
+        </div>`).join('')
     : '<div class="empty" style="padding:22px">No accounts connected yet.</div>';
+
+  const missing = (institutions || []).filter(i => !(accounts || []).some(a => a.institution === i));
+  const missingList = missing.length
+    ? missing.map(i => `<div class="lrow"><div class="nm">${esc(i)}</div>
+        <span class="reauth" data-i="${esc(i)}"
+          style="font-size:12px;color:var(--accent);cursor:pointer">Re-authorize</span></div>`).join('')
+    : '';
 
   const ruleList = (rules && rules.length)
     ? rules.map(r => `<div class="lrow">
@@ -842,11 +854,11 @@ async function loadAccounts() {
           <span class="rule-cat" style="${r.auto ? '' : 'opacity:.6'}">${esc(r.category)}</span>
           <span class="rm" data-m="${esc(r.match)}" style="color:var(--faint);cursor:pointer;font-size:17px">×</span>
         </div></div>`).join('')
-    : '<div class="empty" style="padding:22px">No rules yet. Categorize a few transactions and they build themselves.</div>';
+    : '<div class="empty" style="padding:22px">No rules yet.</div>';
 
   el.innerHTML = `
     <div class="section-label">Connected</div>
-    <div class="card tight">${list}</div>
+    <div class="card tight">${list}${missingList}</div>
     <div class="card"><button class="btn" id="connect">Connect an account</button></div>
 
     <div class="section-label">Merchant memory<span id="apply-rules">apply to queue</span></div>
@@ -863,6 +875,24 @@ async function loadAccounts() {
     await post({ action:'deleteRule', payee:x.dataset.m });
     loadAccounts();
   });
+  el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x));
+}
+
+// Update mode: same Item, same token, just broader consent.
+async function reauth(institution, el) {
+  el.textContent = 'Opening';
+  const r = await post({ action:'updateLinkToken', institution: institution });
+  if (!r.link_token) { alert(r.error_message || r.error || 'Could not start.'); el.textContent = 'Re-authorize'; return; }
+  Plaid.create({
+    token: r.link_token,
+    onSuccess: async () => {
+      // Update mode keeps the existing access token. Nothing to exchange.
+      el.textContent = 'Done';
+      await post({ action:'forceSync' });
+      loadAccounts();
+    },
+    onExit: () => { el.textContent = 'Re-authorize'; }
+  }).open();
 }
 
 async function connectAccount() {
