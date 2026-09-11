@@ -54,6 +54,10 @@
   .chip.save { background:var(--good-bg); border-color:#D3E2DA; color:#3F6B57; }
   .chip:active,.chip.sel { background:var(--accent); border-color:var(--accent); color:#fff; }
   .chip.sug { border-color:var(--accent); border-style:dashed; color:var(--accent); background:var(--accent-bg); }
+  .chip-save { font-size:12.5px; font-weight:600; padding:5px 14px; border-radius:7px; cursor:pointer;
+    border:1px solid var(--accent); background:var(--accent); color:#fff; margin-left:2px;
+    font-family:inherit; line-height:1.45; }
+  .chip-save:active { background:#3A587A; }
   .chip-div { flex-basis:100%; font-size:11px; color:var(--faint); margin:6px 0 1px; }
 
   /* rows */
@@ -174,10 +178,6 @@
   .save-row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; }
   .save-pick { font-size:12.5px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .save-pick b { color:var(--text); font-weight:600; }
-  .save-btn { flex:none; font-size:13px; font-weight:500; padding:8px 16px; border-radius:8px;
-    border:1px solid var(--border); background:var(--surface-2); color:var(--faint);
-    cursor:not-allowed; font-family:inherit; }
-  .save-btn.ready { background:var(--accent); border-color:var(--accent); color:#fff; cursor:pointer; }
 
   /* sparkline grid */
   .spark-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); cursor:pointer; }
@@ -321,6 +321,17 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   if (b.dataset.v === 'projects') loadProjects();
   if (b.dataset.v === 'finances') loadFinances();
   if (b.dataset.v === 'accounts') loadAccounts();
+});
+
+// Desktop shortcut: Enter commits whichever card has a selection,
+// preferring the one under the pointer, otherwise the first in the queue.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const active = document.querySelector('#view-categorize.active');
+  if (!active || pickMode) return;
+  const hovered = [...document.querySelectorAll('#txn-list .card')].find(c => c.matches(':hover') && c.dataset.pick);
+  const card = hovered || document.querySelector('#txn-list .card[data-pick]');
+  if (card) { e.preventDefault(); commitCard(card); }
 });
 
 document.getElementById('sync-btn').onclick = async () => {
@@ -482,7 +493,6 @@ function renderTxns() {
         <span class="save-pick">${sug
           ? 'Suggested <b>' + esc(sug) + '</b>' + (t.suggestSeen > 1 ? ' · seen ' + t.suggestSeen + '×' : '')
           : 'Pick a category'}</span>
-        <button class="save-btn ${sug ? 'ready':''}">Save</button>
       </div>
       <div class="split-box" style="display:none" data-opts='${optsHtml.replace(/'/g, "&#39;")}'></div>
     </div>`;
@@ -499,13 +509,6 @@ function renderTxns() {
     return;
   }
   renderBulkBar();
-
-  el.querySelectorAll('.card').forEach(card => {
-    const pick = card.dataset.pick;
-    if (!pick) return;
-    const chip = [...card.querySelectorAll('.chip')].find(c => c.dataset.c === pick);
-    if (chip) chip.classList.add('sug');
-  });
 
   el.querySelectorAll('.prj-pick').forEach(sel => sel.onchange = async () => {
     const card = sel.closest('.card');
@@ -529,32 +532,14 @@ function renderTxns() {
     renderTxns();
   });
 
-  el.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
-    const card = chip.closest('.card');
-    card.querySelectorAll('.chip').forEach(c => c.classList.remove('sel','sug'));
-    chip.classList.add('sel');
-    card.dataset.pick = chip.dataset.c;
-    card.querySelector('.save-pick').innerHTML = '<b>' + esc(chip.dataset.c) + '</b>';
-    card.querySelector('.save-btn').classList.add('ready');
-  });
+  el.querySelectorAll('.chip').forEach(chip => chip.onclick = () => selectChip(chip));
 
-  el.querySelectorAll('.save-btn').forEach(btn => btn.onclick = async () => {
-    const card = btn.closest('.card');
+  // A suggested chip arrives already selected, with Save sitting next to it.
+  el.querySelectorAll('.card').forEach(card => {
     const pick = card.dataset.pick;
-    if (!pick) return;
-    btn.textContent = 'Saving'; btn.classList.remove('ready');
-    const id = card.dataset.id;
-    const prj = card.querySelector('.prj-pick');
-    await post({ action:'saveCategory', transactionId:id, category:pick });
-    if (prj) await post({ action:'setProject', transactionId:id, project: prj.value });
-    cacheBust();
-    card.style.opacity = '.35';
-    setTimeout(() => {
-      const t = txns.find(x => x.transactionId === id);
-      if (filters.status === 'todo') { txns = txns.filter(x => x.transactionId !== id); totalMatching--; }
-      else if (t) { t.category = pick; t.source = 'manual'; }
-      renderTxns();
-    }, 200);
+    if (!pick || card.dataset.done === 'true') return;
+    const chip = [...card.querySelectorAll('.chip')].find(c => c.dataset.c === pick);
+    if (chip) selectChip(chip, true);
   });
 
   el.querySelectorAll('.split-link').forEach(link => link.onclick = () => {
@@ -565,10 +550,64 @@ function renderTxns() {
       box.style.display = 'none'; box.innerHTML = '';
       card.querySelector('.chips').style.display = '';
       card.querySelector('.save-pick').style.display = '';
-      card.querySelector('.save-btn').style.display = '';
       link.textContent = 'Split';
     }
   });
+}
+
+// Selecting a chip drops a Save button right beside it, so the commit is
+// wherever your finger or cursor already is.
+function selectChip(chip, isSuggestion) {
+  const card = chip.closest('.card');
+  card.querySelectorAll('.chip').forEach(c => c.classList.remove('sel','sug'));
+  const old = card.querySelector('.chip-save');
+  if (old) old.remove();
+
+  chip.classList.add(isSuggestion ? 'sug' : 'sel');
+  card.dataset.pick = chip.dataset.c;
+  const pickEl = card.querySelector('.save-pick');
+  if (pickEl && !isSuggestion) pickEl.innerHTML = '<b>' + esc(chip.dataset.c) + '</b>';
+
+  const btn = document.createElement('button');
+  btn.className = 'chip-save';
+  btn.textContent = 'Save';
+  btn.onclick = (ev) => { ev.stopPropagation(); commitCard(card); };
+  chip.insertAdjacentElement('afterend', btn);
+}
+
+// Optimistic: the card leaves the queue straight away and the write happens
+// behind it. A failure puts it back and says so.
+let inFlight = 0;
+function commitCard(card) {
+  const id = card.dataset.id;
+  const pick = card.dataset.pick;
+  if (!pick) return;
+  const prjEl = card.querySelector('.prj-pick');
+  const project = prjEl ? prjEl.value : null;
+  const snapshot = txns.find(x => x.transactionId === id);
+
+  if (filters.status === 'todo') {
+    txns = txns.filter(x => x.transactionId !== id);
+    totalMatching--;
+  } else if (snapshot) {
+    snapshot.category = pick; snapshot.source = 'manual';
+    if (project !== null) snapshot.project = project;
+  }
+  renderTxns();
+
+  inFlight++;
+  post({ action:'saveCategory', transactionId:id, category:pick })
+    .then(r => {
+      if (r && r.error) throw new Error(r.error);
+      if (project) return post({ action:'setProject', transactionId:id, project: project });
+    })
+    .catch(err => {
+      alert('Could not save that one: ' + err.message);
+      if (snapshot && !txns.some(x => x.transactionId === id)) {
+        txns.unshift(snapshot); totalMatching++; renderTxns();
+      }
+    })
+    .finally(() => { inFlight--; cacheBust(); });
 }
 
 function renderBulkBar() {
@@ -620,7 +659,8 @@ async function doBulk(category) {
 function openSplit(card, box) {
   card.querySelector('.chips').style.display = 'none';
   card.querySelector('.save-pick').style.display = 'none';
-  card.querySelector('.save-btn').style.display = 'none';
+  const cs = card.querySelector('.chip-save');
+  if (cs) cs.remove();
   box.style.display = 'block';
   const total = Number(card.dataset.amt);
   const opts = box.dataset.opts;
