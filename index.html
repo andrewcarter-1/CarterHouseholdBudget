@@ -237,7 +237,7 @@
 <script>
 const API = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
 
-let cats = [], txns = [], months = [], trendCache = null;
+let cats = [], txns = [], months = [];
 const now = new Date();
 let selMonth = now.toLocaleString('en-US', { month: 'long' });
 let selYear  = now.getFullYear();
@@ -252,6 +252,57 @@ async function get(action, params = {}) {
   return (await fetch(u)).json();
 }
 async function post(body) { return (await fetch(API,{method:'POST',body:JSON.stringify(body)})).json(); }
+
+// ---------- cache ----------
+// Tabs render from cache instantly, then quietly refresh behind the scenes.
+// Anything that writes to the sheet clears it.
+const CACHE_PREFIX = 'cbudget:';
+const CACHE_TTL = 10 * 60 * 1000;
+
+function cacheGet(key) {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (Date.now() - o.t > CACHE_TTL) return null;
+    return o.v;
+  } catch (e) { return null; }
+}
+function cacheSet(key, val) {
+  try { localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ t: Date.now(), v: val })); }
+  catch (e) {}
+}
+function cacheBust(prefix) {
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.indexOf(CACHE_PREFIX) === 0 && (!prefix || k.indexOf(CACHE_PREFIX + prefix) === 0))
+      .forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
+}
+
+// Renders from cache if present, then fetches and re-renders only if the
+// data actually changed. render() is called with the payload.
+async function cachedLoad(key, fetcher, render) {
+  const hit = cacheGet(key);
+  if (hit) render(hit, true);
+  const fresh = await fetcher();
+  cacheSet(key, fresh);
+  if (!hit || JSON.stringify(hit) !== JSON.stringify(fresh)) render(fresh, false);
+  return fresh;
+}
+
+// Quietly warms the other tabs so switching feels instant.
+function prefetch() {
+  setTimeout(async () => {
+    try {
+      const bk = 'budget:' + selMonth + selYear;
+      if (!cacheGet(bk)) cacheSet(bk, await get('budgetBundle', { month:selMonth, year:selYear }));
+      if (!cacheGet('finances')) cacheSet('finances', await get('getFinanceReview'));
+      if (!cacheGet('accounts')) cacheSet('accounts', await get('accountsBundle'));
+      if (!cacheGet('trends')) cacheSet('trends', await get('getAllTrends', { months: 6 }));
+    } catch (e) {}
+  }, 400);
+}
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
@@ -270,7 +321,7 @@ document.getElementById('sync-btn').onclick = async () => {
   btn.disabled = true; btn.textContent = 'Syncing';
   const r = await post({ action:'forceSync' });
   btn.disabled = false; btn.textContent = 'Sync';
-  trendCache = null; filtersLoaded = false;
+  cacheBust();   // everything downstream of the log is now stale
   if (r.error) { alert(r.error); return; }
   if (r.errors && r.errors.length) alert('Trouble with:\n' + r.errors.join('\n'));
   else {
@@ -292,15 +343,17 @@ const filters = { status:'todo', account:'all', month:'all', sort:'newest', sear
 let totalMatching = 0;
 
 async function loadCategorize() {
-  const d = await get('categorizeBundle', filters);
-  cats = d.categories || [];
-  txns = d.transactions || [];
-  totalMatching = d.total || 0;
-  renderTxns();
-  if (!filtersLoaded && d.filters) { fillFilterOptions(d.filters); filtersLoaded = true; }
+  const key = 'cat:' + [filters.status, filters.account, filters.month, filters.sort, filters.search].join('|');
+  await cachedLoad(key, () => get('categorizeBundle', filters), (d) => {
+    cats = d.categories || [];
+    txns = d.transactions || [];
+    totalMatching = d.total || 0;
+    renderTxns();
+    if (d.filters) fillFilterOptions(d.filters);
+  });
+  prefetch();
 }
 
-let filtersLoaded = false;
 function fillFilterOptions(o) {
   const acc = document.getElementById('f-account');
   const accVal = acc.value;
@@ -375,12 +428,14 @@ function renderTxns() {
   const byUse = (a,b) => (b.used||0) - (a.used||0);
   const expense  = cats.filter(c => c.type === 'Expense').sort(byUse);
   const savings  = cats.filter(c => c.type === 'Savings').sort(byUse);
+  const incomeC  = cats.filter(c => c.type === 'Income').sort(byUse);
   const excluded = cats.filter(c => c.type === 'Excluded').sort(byUse);
-  const ordered = [...expense, ...savings, ...excluded];
+  const ordered = [...expense, ...savings, ...incomeC, ...excluded];
 
   const chipFor = (c, cls) => `<div class="chip ${cls}" data-c="${esc(c.name)}">${esc(c.name)}</div>`;
   let chipsHtml = expense.map(c => chipFor(c, '')).join('');
   if (savings.length)  chipsHtml += `<div class="chip-div">Savings envelopes</div>` + savings.map(c => chipFor(c, 'save')).join('');
+  if (incomeC.length)  chipsHtml += `<div class="chip-div">Income</div>` + incomeC.map(c => chipFor(c, 'save')).join('');
   if (excluded.length) chipsHtml += `<div class="chip-div">Not budgeted</div>` + excluded.map(c => chipFor(c, 'excl')).join('');
 
   const optsHtml = ordered.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
@@ -442,7 +497,7 @@ function renderTxns() {
     const card = x.closest('.card'); const id = card.dataset.id;
     card.style.opacity = '.35';
     await post({ action:'saveCategory', transactionId:id, category:'' });
-    trendCache = null;
+    cacheBust();
     const t = txns.find(y => y.transactionId === id);
     if (filters.status === 'todo' || filters.status === 'all') {
       if (t) { t.category = ''; t.source = ''; }
@@ -468,7 +523,7 @@ function renderTxns() {
     btn.textContent = 'Saving'; btn.classList.remove('ready');
     const id = card.dataset.id;
     await post({ action:'saveCategory', transactionId:id, category:pick });
-    trendCache = null;
+    cacheBust();
     card.style.opacity = '.35';
     setTimeout(() => {
       const t = txns.find(x => x.transactionId === id);
@@ -519,7 +574,7 @@ async function doBulk(category) {
   picked.clear(); pickMode = false;
   document.getElementById('select-toggle').textContent = 'Select multiple';
   document.getElementById('select-all').style.display = 'none';
-  trendCache = null;
+  cacheBust();
   loadCategorize();
 }
 
@@ -578,7 +633,7 @@ function openSplit(card, box) {
     const id = card.dataset.id;
     const r = await post({ action:'splitTransaction', transactionId:id, splits:splits });
     if (r.error) { alert(r.error); return; }
-    trendCache = null;
+    cacheBust();
     card.style.opacity = '.35';
     setTimeout(() => { txns = txns.filter(t => t.transactionId !== id); renderTxns(); }, 220);
   };
@@ -587,8 +642,13 @@ function openSplit(card, box) {
 // ============ BUDGET (month picker) ============
 async function loadBudget() {
   const el = document.getElementById('budget-body');
-  el.innerHTML = '<div class="empty">Loading</div>';
-  const d = await get('budgetBundle', { month:selMonth, year:selYear });
+  const key = 'budget:' + selMonth + selYear;
+  if (!cacheGet(key)) el.innerHTML = '<div class="empty">Loading</div>';
+  await cachedLoad(key, () => get('budgetBundle', { month:selMonth, year:selYear }), renderBudgetBundle);
+}
+
+function renderBudgetBundle(d) {
+  const el = document.getElementById('budget-body');
   months = d.months || [];
   const budget = d.budget, vaults = d.vaults, accts = d.byAccount;
 
@@ -608,9 +668,13 @@ async function loadBudget() {
 
   const expenses = budget.filter(b => b.type === 'Expense');
   const savings  = budget.filter(b => b.type === 'Savings');
-  const tBud = budget.reduce((s,b) => s + b.budgeted, 0);
-  const tSpent = budget.reduce((s,b) => s + b.spent, 0);
+  const income   = budget.filter(b => b.type === 'Income');
+  const outflow  = expenses.concat(savings);
+  const tBud = outflow.reduce((s,b) => s + b.budgeted, 0);
+  const tSpent = outflow.reduce((s,b) => s + b.spent, 0);
   const left = tBud - tSpent;
+  const incBud = income.reduce((s,b) => s + b.budgeted, 0);
+  const incGot = income.reduce((s,b) => s + b.spent, 0);
 
   let html = picker + `
     <div class="totals">
@@ -619,6 +683,12 @@ async function loadBudget() {
         <div class="val" style="color:${left < 0 ? 'var(--over)':'var(--good)'}">${money(left)}</div></div>
     </div>
     <div class="card">${donut(expenses)}</div>
+    ${income.length ? `<div class="section-label">Income</div>
+      <div class="card tight">${income.map(incomeRow).join('')}
+        ${incBud ? `<div class="fcount" style="padding:6px 0">${
+          money(incGot)} received of ${money(incBud)} expected${
+          incGot >= incBud ? '' : ' · ' + money(incBud - incGot) + ' to come'}</div>` : ''}
+      </div>` : ''}
     <div class="section-label">Spending</div>
     <div class="card tight">${expenses.map(row).join('')}</div>`;
 
@@ -646,6 +716,7 @@ async function loadBudget() {
       <select id="c-type">
         <option value="Expense">Expense — counts against budget</option>
         <option value="Savings">Savings — builds an envelope</option>
+        <option value="Income">Income — expected inflow</option>
         <option value="Excluded">Excluded — ignore (transfers, CC payments)</option>
       </select>
       <button class="btn ghost" id="c-add">Add category</button>
@@ -661,6 +732,14 @@ function bindPicker() {
   document.querySelectorAll('#view-budget .mpill').forEach(p => p.onclick = () => {
     selMonth = p.dataset.m; selYear = Number(p.dataset.y); loadBudget();
   });
+}
+
+function incomeRow(b) {
+  const pct = b.budgeted > 0 ? Math.min(100, (b.spent / b.budgeted) * 100) : 0;
+  return `<div class="brow" data-cat="${esc(b.category)}">
+    <div class="brow-top"><span class="brow-cat">${esc(b.category)}</span>
+      <span class="brow-num"><b>${money(b.spent)}</b> of ${money(b.budgeted)}</span></div>
+    <div class="track"><div class="fill" style="width:${pct}%"></div></div></div>`;
 }
 
 function row(b) {
@@ -705,15 +784,18 @@ async function addCategory() {
   if (type !== 'Excluded' && !amt) { alert('Give it a monthly amount.'); return; }
   const r = await post({ action:'addCategory', category:name, defaultAmount:amt, type:type });
   if (r.error) { alert(r.error); return; }
-  cats = await get('getCategories'); trendCache = null; loadBudget();
+  cats = await get('getCategories'); cacheBust(); loadBudget();
 }
 
 // ============ COMPARE (all months, all categories) ============
 async function loadCompare() {
   const el = document.getElementById('trends-body');
-  el.innerHTML = '<div class="empty">Loading</div>';
-  if (!trendCache) trendCache = await get('getAllTrends', { months: 6 });
-  const t = trendCache;
+  if (!cacheGet('trends')) el.innerHTML = '<div class="empty">Loading</div>';
+  await cachedLoad('trends', () => get('getAllTrends', { months: 6 }), renderCompare);
+}
+
+function renderCompare(t) {
+  const el = document.getElementById('trends-body');
   if (t.error) { el.innerHTML = '<div class="empty"><b>No data yet</b>' + esc(t.error) + '</div>'; return; }
 
   const anySpend = t.totals.some(x => x.spent > 0);
@@ -857,8 +939,12 @@ function bars(series) {
 // ============ FINANCES ============
 async function loadFinances() {
   const el = document.getElementById('finances-body');
-  el.innerHTML = '<div class="empty">Loading</div>';
-  const d = await get('getFinanceReview');
+  if (!cacheGet('finances')) el.innerHTML = '<div class="empty">Loading</div>';
+  await cachedLoad('finances', () => get('getFinanceReview'), renderFinances);
+}
+
+function renderFinances(d) {
+  const el = document.getElementById('finances-body');
 
   if (!d.groups || !d.groups.length) {
     el.innerHTML = `<div class="empty"><b>No balances yet</b>Pull them from your banks to get started.</div>
@@ -1047,8 +1133,7 @@ async function openAccount(accountId) {
     const nu = prompt('Rename this account', a.name);
     if (nu === null) return;
     await post({ action:'renameAccount', accountId:a.id, displayName:nu.trim() });
-    filtersLoaded = false;
-    openAccount(accountId);
+        openAccount(accountId);
   };
   const sr = document.getElementById('set-ref');
   if (sr) sr.onclick = async () => {
@@ -1172,15 +1257,20 @@ function fmtWhen(iso) {
 // ============ ACCOUNTS ============
 async function loadAccounts() {
   const el = document.getElementById('accounts-body');
-  el.innerHTML = '<div class="empty">Loading</div>';
-  const d = await get('accountsBundle');
+  if (!cacheGet('accounts')) el.innerHTML = '<div class="empty">Loading</div>';
+  await cachedLoad('accounts', () => get('accountsBundle'), renderAccounts);
+}
+
+function renderAccounts(d) {
+  const el = document.getElementById('accounts-body');
   const accounts = d.accounts, rules = d.rules, institutions = d.institutions;
 
   const consentOf = {};
   (institutions || []).forEach(i => consentOf[i.name] = i.consented);
 
   const reauthCell = (name) => consentOf[name]
-    ? `<span class="sb" style="flex:none;color:var(--good)">${consentOf[name].join(' · ')}</span>`
+    ? `<span class="reauth" data-i="${esc(name)}" data-mode="accounts"
+        style="font-size:12px;color:var(--accent);cursor:pointer;flex:none">Add accounts</span>`
     : `<span class="reauth" data-i="${esc(name)}"
         style="font-size:12px;color:var(--accent);cursor:pointer;flex:none">Re-authorize</span>`;
 
@@ -1225,31 +1315,35 @@ async function loadAccounts() {
   document.getElementById('apply-rules').onclick = async () => {
     const r = await post({ action:'applyRules' });
     alert(r.applied ? r.applied + ' transactions categorized from memory.' : 'Nothing in the queue matched a known payee.');
-    trendCache = null; loadAccounts();
+    cacheBust(); loadAccounts();
   };
   el.querySelectorAll('.rm').forEach(x => x.onclick = async () => {
     if (!confirm('Forget this merchant rule?')) return;
     await post({ action:'deleteRule', payee:x.dataset.m });
     loadAccounts();
   });
-  el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x));
+  el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x, x.dataset.mode === 'accounts'));
 }
 
 // Update mode: same Item, same token, just broader consent.
-async function reauth(institution, el) {
+// Update mode. Same Item, same token, no new connection slot. Used both to
+// grant extra product consent and to share accounts opened after linking.
+async function reauth(institution, el, accountsOnly) {
+  const label = el.textContent;
   el.textContent = 'Opening';
-  const r = await post({ action:'updateLinkToken', institution: institution });
-  if (!r.link_token) { alert(r.error || 'Could not start.'); el.textContent = 'Re-authorize'; return; }
+  const r = await post({ action:'updateLinkToken', institution: institution, accountsOnly: !!accountsOnly });
+  if (!r.link_token) { alert(r.error || 'Could not start.'); el.textContent = label; return; }
   Plaid.create({
     token: r.link_token,
     onSuccess: async () => {
-      // Update mode keeps the existing access token. Nothing to exchange.
-      el.textContent = 'Saving';
-      await post({ action:'markReauthed', institution: institution, products: r.products });
+      el.textContent = 'Updating';
+      if (!accountsOnly) await post({ action:'markReauthed', institution: institution, products: r.products });
       await post({ action:'forceSync' });
+      await post({ action:'refreshFinances' });
+      cacheBust();
       loadAccounts();
     },
-    onExit: () => { el.textContent = 'Re-authorize'; }
+    onExit: () => { el.textContent = label; }
   }).open();
 }
 
@@ -1263,7 +1357,7 @@ async function connectAccount(kind) {
     if (res.error) { alert(res.error); return; }
     await post({ action:'forceSync' });
     await post({ action:'refreshFinances' });
-    trendCache = null; filtersLoaded = false;
+    cacheBust();
     loadAccounts();
   }}).open();
 }
