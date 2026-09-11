@@ -75,6 +75,16 @@
 
   .lrow { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); }
   .lrow:last-child { border-bottom:none; }
+  .acct-row { cursor:pointer; margin:0 -14px; padding-left:14px; padding-right:14px; position:relative; }
+  .acct-row .vl { padding-right:14px; }
+  .acct-row:after { content:'›'; position:absolute; right:2px; top:50%; transform:translateY(-52%);
+    color:var(--faint); font-size:17px; line-height:1; }
+  .acct-row:hover { background:var(--surface-2); }
+  .acct-row:active { background:var(--accent-bg); }
+  .brow, .spark-row { cursor:pointer; margin:0 -14px; padding-left:14px; padding-right:26px; position:relative; }
+  .brow:after, .spark-row:after { content:'›'; position:absolute; right:8px; top:50%;
+    transform:translateY(-52%); color:var(--faint); font-size:16px; line-height:1; }
+  .brow:hover, .spark-row:hover { background:var(--surface-2); }
   .lrow .nm { font-size:14px; font-weight:500; }
   .lrow .sb { font-size:11.5px; color:var(--faint); }
   .lrow .vl { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
@@ -121,7 +131,7 @@
   .filters { background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
     padding:10px; margin-bottom:10px; }
   .seg { display:flex; gap:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:8px; }
-  .seg button { flex:1; padding:7px 0; background:var(--surface-2); border:none; font-size:12.5px;
+  .seg button { flex:1; padding:7px 2px; background:var(--surface-2); border:none; font-size:11.5px;
     color:var(--muted); cursor:pointer; font-family:inherit; border-right:1px solid var(--border); }
   .seg button:last-child { border-right:none; }
   .seg button.on { background:var(--accent); color:#fff; font-weight:500; }
@@ -185,7 +195,8 @@
       <div class="seg" id="seg-status">
         <button class="on" data-s="todo">To do</button>
         <button data-s="done">Categorized</button>
-        <button data-s="auto">Auto-filed</button>
+        <button data-s="auto">Auto</button>
+        <button data-s="pending">Pending</button>
         <button data-s="all">All</button>
       </div>
       <div class="frow">
@@ -262,10 +273,16 @@ document.getElementById('sync-btn').onclick = async () => {
   trendCache = null; filtersLoaded = false;
   if (r.error) { alert(r.error); return; }
   if (r.errors && r.errors.length) alert('Trouble with:\n' + r.errors.join('\n'));
-  else if (r.auto > 0) {
-    document.getElementById('subtitle').textContent = r.auto + ' auto-categorized';
-    setTimeout(() => loadCategorize(), 1400);
-    return;
+  else {
+    const bits = [];
+    if (r.added) bits.push(r.added + ' new');
+    if (r.auto) bits.push(r.auto + ' auto-filed');
+    if (r.dropped) bits.push(r.dropped + ' pending cleared');
+    if (bits.length) {
+      document.getElementById('subtitle').textContent = bits.join(' · ');
+      setTimeout(() => loadCategorize(), 1600);
+      return;
+    }
   }
   await loadCategorize();
 };
@@ -348,7 +365,9 @@ function renderTxns() {
   if (!txns.length) {
     el.innerHTML = todo
       ? '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>'
-      : '<div class="empty"><b>No matches</b>Try widening the filters.</div>';
+      : (filters.status === 'pending'
+        ? '<div class="empty"><b>Nothing pending</b>Charges appear here until the bank posts them.</div>'
+        : '<div class="empty"><b>No matches</b>Try widening the filters.</div>');
     renderBulkBar();
     return;
   }
@@ -378,7 +397,8 @@ function renderTxns() {
       <div class="txn-head">
         ${pickMode ? '<div class="pick-dot"></div>' : ''}
         <div style="flex:1;min-width:0"><div class="txn-payee">${esc(t.payee)}</div>
-        <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.institution)}${t.card ? ' · ' + esc(t.card) : ''}</div></div>
+        <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.institution)}${t.card ? ' · ' + esc(t.card) : ''}${
+          t.pending ? ' · <span style="color:var(--warn)">pending</span>' : ''}</div></div>
         <div class="txn-amt ${t.amount > 0 ? 'in':''}">${t.amount > 0 ? '+':''}${money(t.amount)}</div>
       </div>
       ${done ? `<div style="margin-top:9px">
@@ -871,11 +891,14 @@ async function loadFinances() {
       soon.map(a => {
         const days = Math.ceil((new Date(a.due + 'T12:00:00') - new Date()) / 86400000);
         const urgent = days <= 7 && days >= 0;
-        // Cards owe the statement balance; loans owe a scheduled payment.
-        const owed = a.statement != null ? a.statement : a.scheduled;
+        // Cards owe the statement balance. For loans the realistic figure is
+        // what actually cleared last cycle, which includes escrow; P&I alone
+        // is shown inside the account.
+        const owed = a.statement != null ? a.statement
+                   : (a.lastPayment != null ? a.lastPayment : a.scheduled);
         const sub = [fmtDue(a.due)];
         sub.push(days >= 0 ? 'in ' + days + 'd' : Math.abs(days) + 'd ago');
-        if (a.type === 'loan') sub.push('balance ' + money(a.balance));
+        if (a.type === 'loan' && a.scheduled != null) sub.push('P&I ' + money(a.scheduled));
         return `<div class="lrow acct-row" data-id="${esc(a.id)}">
           <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
             <div class="sb">${sub.join(' · ')}</div></div>
@@ -956,15 +979,31 @@ async function openAccount(accountId) {
       <button class="btn ghost" id="set-ref">Set value</button></div>`;
   }
 
+  // Only what the servicer actually reports. Plaid has no field for the
+  // monthly escrow portion, or for PMI, tax and insurance individually.
+  let paymentBlock = '';
+  if (a.lastPayment != null || a.scheduled != null) {
+    const parts = [];
+    if (a.scheduled != null) parts.push(['Principal and interest', money(a.scheduled)]);
+    if (a.lastPayment != null) parts.push(
+      ['Last payment' + (a.lastPaymentDate ? ' · ' + fmtDue(a.lastPaymentDate) : ''), money(a.lastPayment)]);
+    if (a.escrowBalance != null) parts.push(['Escrow balance held', money(a.escrowBalance)]);
+    paymentBlock = `
+      <div class="section-label">Payment</div>
+      <div class="card tight">${parts.map(p => `
+        <div class="lrow"><div class="nm" style="font-weight:400">${p[0]}</div>
+          <div class="vl" style="font-size:14px">${p[1]}</div></div>`).join('')}</div>`;
+  }
+
   const rows = [];
   if (a.available != null && a.type === 'depository') rows.push(['Available', money(a.available)]);
   if (a.limit) rows.push(['Credit limit', money(a.limit)]);
   if (a.limit) rows.push(['Available credit', money(a.limit - a.balance)]);
   if (a.statement != null) rows.push(['Statement balance', money(a.statement)]);
-  if (a.scheduled != null) rows.push(['Scheduled payment', money(a.scheduled)]);
+  if (a.scheduled != null && a.type !== 'loan') rows.push(['Scheduled payment', money(a.scheduled)]);
   if (a.due) rows.push(['Next due', fmtDue(a.due)]);
   if (a.apr) rows.push(['APR', a.apr + '%']);
-  if (a.lastPayment != null) rows.push(['Last payment', money(a.lastPayment)]);
+  if (a.lastPayment != null && a.type !== 'loan') rows.push(['Last payment', money(a.lastPayment)]);
   rows.push(['Account', a.plaidName + (a.mask ? ' ••' + a.mask : '')]);
 
   // Everything else Plaid returns for this liability.
@@ -989,6 +1028,7 @@ async function openAccount(accountId) {
       ${a.series.length > 1 ? changeLine :
         '<div class="fcount" style="text-align:center;margin-top:10px">History starts building from the first refresh.</div>'}
     </div>
+    ${paymentBlock}
     ${payoffBlock}
     ${ratioBlock}
     <div class="card tight">${rows.map(r => `
@@ -997,7 +1037,9 @@ async function openAccount(accountId) {
     ${detailRows.length ? `<div class="section-label">Loan details</div>
       <div class="card tight">${detailRows.map(r => `
         <div class="lrow"><div class="nm" style="font-weight:400">${esc(r[0])}</div>
-          <div class="vl" style="font-size:14px;text-align:right">${esc(r[1])}</div></div>`).join('')}</div>` : ''}`;
+          <div class="vl" style="font-size:14px;text-align:right">${esc(r[1])}</div></div>`).join('')}</div>`
+      : (isDebt ? `<div class="card"><div style="font-size:13px;color:var(--muted)">
+          No detail stored yet. Tap Refresh balances on the accounts list to pull it.</div></div>` : '')}`;
 
   document.getElementById('back-fin').onclick = loadFinances;
   document.getElementById('rename-acct').onclick = async (ev) => {
