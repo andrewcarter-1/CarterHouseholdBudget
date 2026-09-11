@@ -132,6 +132,29 @@
   .cat-badge { font-size:12px; color:var(--accent); background:var(--accent-bg);
     padding:3px 9px; border-radius:6px; cursor:pointer; display:inline-block; margin-top:9px; }
   .cat-badge.excl { color:var(--muted); background:#F0EFEC; font-style:italic; }
+  .auto-tag { font-size:10.5px; color:var(--warn); border:1px solid #E8DCC4; background:#FBF6EC;
+    padding:2px 6px; border-radius:5px; margin-left:5px; vertical-align:1px; }
+  .clear-cat { font-size:12px; color:var(--faint); cursor:pointer; margin-left:8px; }
+
+  /* bulk select */
+  .card.pick-mode { cursor:pointer; }
+  .card.picked { border-color:var(--accent); background:var(--accent-bg); }
+  .pick-dot { width:18px; height:18px; border-radius:5px; border:1.5px solid var(--border);
+    background:#fff; flex:none; margin-right:10px; position:relative; }
+  .card.picked .pick-dot { background:var(--accent); border-color:var(--accent); }
+  .card.picked .pick-dot:after { content:'✓'; color:#fff; font-size:12px; position:absolute;
+    left:3px; top:-1px; }
+  .bulk-bar { position:fixed; bottom:56px; left:0; right:0; max-width:500px; margin:0 auto;
+    background:var(--surface); border-top:1px solid var(--border); padding:10px 14px; z-index:25;
+    box-shadow:0 -2px 12px rgba(0,0,0,.06); }
+  .bulk-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .bulk-head span { font-size:13px; font-weight:500; }
+  .bulk-head a { font-size:12.5px; color:var(--accent); cursor:pointer; }
+  .bulk-row { display:flex; gap:6px; }
+  .bulk-row select { flex:1; margin:0; font-size:13px; padding:9px; }
+  .bulk-row button { flex:none; font-size:13px; padding:9px 14px; border-radius:8px; cursor:pointer;
+    font-family:inherit; border:1px solid var(--border); background:var(--surface-2); color:var(--accent); }
+  .bulk-row button.go { background:var(--accent); color:#fff; border-color:var(--accent); }
 
   .save-row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; }
   .save-pick { font-size:12.5px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -160,8 +183,9 @@
   <section class="view active" id="view-categorize">
     <div class="filters">
       <div class="seg" id="seg-status">
-        <button class="on" data-s="todo">Needs category</button>
+        <button class="on" data-s="todo">To do</button>
         <button data-s="done">Categorized</button>
+        <button data-s="auto">Auto-filed</button>
         <button data-s="all">All</button>
       </div>
       <div class="frow">
@@ -178,8 +202,13 @@
         <input type="text" id="f-search" placeholder="Search payee">
       </div>
       <div class="fcount" id="f-count"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span id="select-toggle" style="font-size:12.5px;color:var(--accent);cursor:pointer">Select multiple</span>
+        <span id="select-all" style="font-size:12.5px;color:var(--accent);cursor:pointer;display:none">Select all shown</span>
+      </div>
     </div>
     <div id="txn-list"></div>
+    <div id="bulk-bar"></div>
   </section>
   <section class="view" id="view-budget"><div id="budget-body"></div></section>
   <section class="view" id="view-trends"><div id="trends-body"></div></section>
@@ -200,7 +229,8 @@ const now = new Date();
 let selMonth = now.toLocaleString('en-US', { month: 'long' });
 let selYear  = now.getFullYear();
 
-const money = n => '$' + Math.round(Math.abs(n)).toLocaleString();
+const money = n => '$' + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moneyShort = n => '$' + Math.round(Math.abs(Number(n) || 0)).toLocaleString();
 const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
 async function get(action, params = {}) {
@@ -284,6 +314,22 @@ document.getElementById('f-search').oninput = e => {
   searchTimer = setTimeout(() => { filters.search = e.target.value.trim(); loadCategorize(); }, 350);
 };
 
+let pickMode = false;
+const picked = new Set();
+
+document.getElementById('select-toggle').onclick = () => {
+  pickMode = !pickMode;
+  picked.clear();
+  document.getElementById('select-toggle').textContent = pickMode ? 'Cancel selection' : 'Select multiple';
+  document.getElementById('select-all').style.display = pickMode ? '' : 'none';
+  renderTxns();
+};
+document.getElementById('select-all').onclick = () => {
+  if (picked.size === txns.length) picked.clear();
+  else txns.forEach(t => picked.add(t.transactionId));
+  renderTxns();
+};
+
 function renderTxns() {
   const el = document.getElementById('txn-list');
   const todo = filters.status === 'todo';
@@ -296,11 +342,10 @@ function renderTxns() {
     el.innerHTML = todo
       ? '<div class="empty"><b>Nothing to categorize</b>Tap Sync to pull anything new.</div>'
       : '<div class="empty"><b>No matches</b>Try widening the filters.</div>';
+    renderBulkBar();
     return;
   }
 
-  // Grouped by type so the colors read as sections. Within each group,
-  // most-used first so common picks stay near the top.
   const byUse = (a,b) => (b.used||0) - (a.used||0);
   const expense  = cats.filter(c => c.type === 'Expense').sort(byUse);
   const savings  = cats.filter(c => c.type === 'Savings').sort(byUse);
@@ -318,21 +363,25 @@ function renderTxns() {
   el.innerHTML = txns.map(t => {
     const done = !!t.category;
     const sug = !done && t.suggested ? t.suggested : '';
+    const sel = picked.has(t.transactionId);
     return `
-    <div class="card" data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}" data-done="${done}"
+    <div class="card ${pickMode ? 'pick-mode':''} ${sel ? 'picked':''}"
+         data-id="${esc(t.transactionId)}" data-amt="${Math.abs(t.amount)}" data-done="${done}"
          ${sug ? `data-pick="${esc(sug)}"` : ''}>
       <div class="txn-head">
-        <div><div class="txn-payee">${esc(t.payee)}</div>
+        ${pickMode ? '<div class="pick-dot"></div>' : ''}
+        <div style="flex:1;min-width:0"><div class="txn-payee">${esc(t.payee)}</div>
         <div class="txn-meta">${fmtDate(t.date)} · ${esc(t.institution)}${t.card ? ' · ' + esc(t.card) : ''}</div></div>
         <div class="txn-amt ${t.amount > 0 ? 'in':''}">${t.amount > 0 ? '+':''}${money(t.amount)}</div>
       </div>
-      ${done
-        ? `<span class="cat-badge ${typeOf[t.category] === 'Excluded' ? 'excl':''}">${esc(t.category)}</span>`
-        : ''}
-      <div class="chips" style="${done ? 'display:none' : ''}">${
-        sug ? chipsHtml.replace(`data-c="${esc(sug)}"`, `data-c="${esc(sug)}" class-hook="sug"`) : chipsHtml
-      }</div>
-      <div class="save-row" style="${done ? 'display:none' : ''}">
+      ${done ? `<div style="margin-top:9px">
+          <span class="cat-badge ${typeOf[t.category] === 'Excluded' ? 'excl':''}">${esc(t.category)}</span>
+          ${t.source === 'auto' ? '<span class="auto-tag">auto</span>' : ''}
+          ${t.source === 'split' ? '<span class="auto-tag">split</span>' : ''}
+          <span class="clear-cat">Uncategorize</span>
+        </div>` : ''}
+      <div class="chips" style="${done || pickMode ? 'display:none' : ''}">${chipsHtml}</div>
+      <div class="save-row" style="${done || pickMode ? 'display:none' : ''}">
         <span class="split-link" style="margin-top:0">Split</span>
         <span class="save-pick">${sug
           ? 'Suggested <b>' + esc(sug) + '</b>' + (t.suggestSeen > 1 ? ' · seen ' + t.suggestSeen + '×' : '')
@@ -343,7 +392,18 @@ function renderTxns() {
     </div>`;
   }).join('');
 
-  // highlight any pre-selected suggestion
+  if (pickMode) {
+    el.querySelectorAll('.card').forEach(card => card.onclick = () => {
+      const id = card.dataset.id;
+      if (picked.has(id)) picked.delete(id); else picked.add(id);
+      card.classList.toggle('picked');
+      renderBulkBar();
+    });
+    renderBulkBar();
+    return;
+  }
+  renderBulkBar();
+
   el.querySelectorAll('.card').forEach(card => {
     const pick = card.dataset.pick;
     if (!pick) return;
@@ -351,15 +411,14 @@ function renderTxns() {
     if (chip) chip.classList.add('sug');
   });
 
-  // tapping the badge on a categorized row opens the chips to change it
-  el.querySelectorAll('.cat-badge').forEach(badge => badge.onclick = () => {
-    const card = badge.closest('.card');
-    card.querySelector('.chips').style.display = '';
-    card.querySelector('.save-row').style.display = '';
-    badge.style.display = 'none';
+  el.querySelectorAll('.clear-cat').forEach(x => x.onclick = async () => {
+    const card = x.closest('.card'); const id = card.dataset.id;
+    card.style.opacity = '.35';
+    await post({ action:'saveCategory', transactionId:id, category:'' });
+    trendCache = null;
+    loadCategorize();
   });
 
-  // selecting a chip only stages the choice; nothing saves until Save is tapped
   el.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
     const card = chip.closest('.card');
     card.querySelectorAll('.chip').forEach(c => c.classList.remove('sel','sug'));
@@ -396,6 +455,37 @@ function renderTxns() {
       link.textContent = 'Split';
     }
   });
+}
+
+function renderBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  if (!pickMode || !picked.size) { bar.innerHTML = ''; return; }
+  const opts = cats.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  bar.innerHTML = `
+    <div class="bulk-bar">
+      <div class="bulk-head"><span>${picked.size} selected</span><a id="bulk-none">Clear</a></div>
+      <div class="bulk-row">
+        <select id="bulk-cat">${opts}</select>
+        <button class="go" id="bulk-go">Assign</button>
+        <button id="bulk-clear">Uncategorize</button>
+      </div>
+    </div>`;
+  document.getElementById('bulk-none').onclick = () => { picked.clear(); renderTxns(); };
+  document.getElementById('bulk-go').onclick = () => doBulk(document.getElementById('bulk-cat').value);
+  document.getElementById('bulk-clear').onclick = () => doBulk('');
+}
+
+async function doBulk(category) {
+  const ids = [...picked];
+  const btn = document.getElementById('bulk-go');
+  if (btn) btn.textContent = 'Saving';
+  const r = await post({ action:'bulkAssign', transactionIds:ids, category:category });
+  if (r.error) { alert(r.error); return; }
+  picked.clear(); pickMode = false;
+  document.getElementById('select-toggle').textContent = 'Select multiple';
+  document.getElementById('select-all').style.display = 'none';
+  trendCache = null;
+  loadCategorize();
 }
 
 function openSplit(card, box) {
@@ -506,7 +596,7 @@ async function loadBudget() {
       <div class="lrow"><div><div class="nm">${esc(v.name)}</div>
         <div class="sb">${money(v.contributed)} in · ${money(v.spent)} spent</div></div>
         <div class="vl" style="color:var(--good)">${money(v.balance)}</div></div>`).join('') + `</div>
-    <div class="note">Money moved into an envelope counts against the budget that month. Spending it later does not, so a trip paid from savings will not blow up that month.</div>`;
+`;
 
   if (accts && accts.length) html += `<div class="section-label">By card</div>
     <div class="card tight">` + accts.map(a => `
@@ -568,7 +658,7 @@ function donut(rows) {
       <span style="color:var(--muted);font-variant-numeric:tabular-nums">${money(d.spent)}</span></div>`).join('');
   return `<div style="display:flex;gap:14px;align-items:center">
     <svg width="140" height="140" viewBox="0 0 140 140" style="flex:none">${arcs}
-      <text x="70" y="66" text-anchor="middle" font-size="17" font-weight="600" fill="#23262A">${money(total)}</text>
+      <text x="70" y="66" text-anchor="middle" font-size="17" font-weight="600" fill="#23262A">${moneyShort(total)}</text>
       <text x="70" y="82" text-anchor="middle" font-size="10.5" fill="#767B82">spent</text></svg>
     <div style="flex:1">${legend}</div></div>`;
 }
@@ -725,7 +815,7 @@ function bars(series) {
   if (bd) {
     const y = H-20-(bd.budgeted/max)*(H-40);
     line = `<line x1="${pad}" x2="${W-pad}" y1="${y}" y2="${y}" stroke="#767B82" stroke-width="1" stroke-dasharray="4 3" opacity=".7"/>
-      <text x="${W-pad}" y="${y-4}" text-anchor="end" font-size="9.5" fill="#767B82">budget ${money(bd.budgeted)}</text>`;
+      <text x="${W-pad}" y="${y-4}" text-anchor="end" font-size="9.5" fill="#767B82">budget ${moneyShort(bd.budgeted)}</text>`;
   }
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${line}${b}</svg>`;
 }
@@ -755,13 +845,11 @@ async function loadAccounts() {
     : '<div class="empty" style="padding:22px">No rules yet. Categorize a few transactions and they build themselves.</div>';
 
   el.innerHTML = `
-    <div class="note">One login can cover several accounts. Both Chase cards under one Chase login count as a single connection against the 10 you have.</div>
     <div class="section-label">Connected</div>
     <div class="card tight">${list}</div>
     <div class="card"><button class="btn" id="connect">Connect an account</button></div>
 
     <div class="section-label">Merchant memory<span id="apply-rules">apply to queue</span></div>
-    <div class="note">Tag a payee once and it only suggests, shown as a dashed chip you still have to save. Tag it the same way twice and it starts filing itself on sync. Change your mind and the streak resets.</div>
     <div class="card tight">${ruleList}</div>`;
 
   document.getElementById('connect').onclick = connectAccount;
