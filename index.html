@@ -106,7 +106,7 @@
   nav { position:fixed; bottom:0; left:0; right:0; max-width:500px; margin:0 auto;
     background:rgba(255,255,255,.94); backdrop-filter:blur(12px); border-top:1px solid var(--border);
     display:flex; padding-bottom:env(safe-area-inset-bottom); z-index:20; }
-  nav button { flex:1; padding:11px 0 10px; background:none; border:none; font-size:11.5px;
+  nav button { flex:1; padding:11px 0 10px; background:none; border:none; font-size:10.5px;
     color:var(--muted); cursor:pointer; font-family:inherit; }
   nav button.active { color:var(--accent); font-weight:600; }
   nav .dot { display:block; font-size:16px; line-height:1.1; margin-bottom:1px; }
@@ -142,6 +142,11 @@
   .cat-badge { font-size:12px; color:var(--accent); background:var(--accent-bg);
     padding:3px 9px; border-radius:6px; cursor:pointer; display:inline-block; margin-top:9px; }
   .cat-badge.excl { color:var(--muted); background:#F0EFEC; font-style:italic; }
+  .prj-row { display:flex; align-items:center; gap:8px; margin-top:9px; }
+  .prj-label { font-size:12px; color:var(--muted); flex:none; }
+  .prj-pick { margin:0; font-size:12.5px; padding:6px 8px; flex:1; }
+  .prj-tag { font-size:10.5px; color:#5B6CB8; border:1px solid #D9DDF2; background:#F0F2FB;
+    padding:2px 7px; border-radius:5px; margin-left:5px; vertical-align:1px; }
   .auto-tag { font-size:10.5px; color:var(--warn); border:1px solid #E8DCC4; background:#FBF6EC;
     padding:2px 6px; border-radius:5px; margin-left:5px; vertical-align:1px; }
   .clear-cat { font-size:12px; color:var(--faint); cursor:pointer; margin-left:8px; }
@@ -195,7 +200,6 @@
       <div class="seg" id="seg-status">
         <button class="on" data-s="todo">To do</button>
         <button data-s="done">Categorized</button>
-        <button data-s="auto">Auto</button>
         <button data-s="pending">Pending</button>
         <button data-s="all">All</button>
       </div>
@@ -223,13 +227,15 @@
   </section>
   <section class="view" id="view-budget"><div id="budget-body"></div></section>
   <section class="view" id="view-trends"><div id="trends-body"></div></section>
+  <section class="view" id="view-projects"><div id="projects-body"></div></section>
   <section class="view" id="view-finances"><div id="finances-body"></div></section>
   <section class="view" id="view-accounts"><div id="accounts-body"></div></section>
 </div>
 <nav>
-  <button class="active" data-v="categorize"><span class="dot">◎</span>Categorize</button>
+  <button class="active" data-v="categorize"><span class="dot">◎</span>Review</button>
   <button data-v="budget"><span class="dot">▤</span>Budget</button>
-  <button data-v="trends"><span class="dot">◪</span>Compare</button>
+  <button data-v="trends"><span class="dot">◪</span>Trends</button>
+  <button data-v="projects"><span class="dot">◫</span>Projects</button>
   <button data-v="finances"><span class="dot">◈</span>Finances</button>
   <button data-v="accounts"><span class="dot">⬡</span>Accounts</button>
 </nav>
@@ -237,7 +243,7 @@
 <script>
 const API = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
 
-let cats = [], txns = [], months = [];
+let cats = [], txns = [], months = [], projects = [];
 const now = new Date();
 let selMonth = now.toLocaleString('en-US', { month: 'long' });
 let selYear  = now.getFullYear();
@@ -312,6 +318,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   window.scrollTo(0,0);
   if (b.dataset.v === 'budget') loadBudget();
   if (b.dataset.v === 'trends') loadCompare();
+  if (b.dataset.v === 'projects') loadProjects();
   if (b.dataset.v === 'finances') loadFinances();
   if (b.dataset.v === 'accounts') loadAccounts();
 });
@@ -327,7 +334,6 @@ document.getElementById('sync-btn').onclick = async () => {
   else {
     const bits = [];
     if (r.added) bits.push(r.added + ' new');
-    if (r.auto) bits.push(r.auto + ' auto-filed');
     if (r.dropped) bits.push(r.dropped + ' pending cleared');
     if (bits.length) {
       document.getElementById('subtitle').textContent = bits.join(' · ');
@@ -347,6 +353,7 @@ async function loadCategorize() {
   await cachedLoad(key, () => get('categorizeBundle', filters), (d) => {
     cats = d.categories || [];
     txns = d.transactions || [];
+    projects = d.projects || [];
     totalMatching = d.total || 0;
     renderTxns();
     if (d.filters) fillFilterOptions(d.filters);
@@ -460,9 +467,16 @@ function renderTxns() {
           <span class="cat-badge ${typeOf[t.category] === 'Excluded' ? 'excl':''}">${esc(t.category)}</span>
           ${t.source === 'auto' ? '<span class="auto-tag">auto</span>' : ''}
           ${t.source === 'split' ? '<span class="auto-tag">split</span>' : ''}
+          ${t.project ? '<span class="prj-tag">' + esc(t.project) + '</span>' : ''}
           <span class="clear-cat">Uncategorize</span>
         </div>` : ''}
       <div class="chips" style="${done || pickMode ? 'display:none' : ''}">${chipsHtml}</div>
+      ${projects.length ? `<div class="prj-row" style="${pickMode ? 'display:none' : ''}">
+        <span class="prj-label">Project</span>
+        <select class="prj-pick">
+          <option value="">none</option>
+          ${projects.map(p => `<option value="${esc(p)}" ${t.project === p ? 'selected':''}>${esc(p)}</option>`).join('')}
+        </select></div>` : ''}
       <div class="save-row" style="${done || pickMode ? 'display:none' : ''}">
         <span class="split-link" style="margin-top:0">Split</span>
         <span class="save-pick">${sug
@@ -491,6 +505,14 @@ function renderTxns() {
     if (!pick) return;
     const chip = [...card.querySelectorAll('.chip')].find(c => c.dataset.c === pick);
     if (chip) chip.classList.add('sug');
+  });
+
+  el.querySelectorAll('.prj-pick').forEach(sel => sel.onchange = async () => {
+    const card = sel.closest('.card');
+    if (card.dataset.done === 'true') {
+      await post({ action:'setProject', transactionId:card.dataset.id, project: sel.value });
+      cacheBust();
+    }
   });
 
   el.querySelectorAll('.clear-cat').forEach(x => x.onclick = async () => {
@@ -522,7 +544,9 @@ function renderTxns() {
     if (!pick) return;
     btn.textContent = 'Saving'; btn.classList.remove('ready');
     const id = card.dataset.id;
+    const prj = card.querySelector('.prj-pick');
     await post({ action:'saveCategory', transactionId:id, category:pick });
+    if (prj) await post({ action:'setProject', transactionId:id, project: prj.value });
     cacheBust();
     card.style.opacity = '.35';
     setTimeout(() => {
@@ -557,12 +581,27 @@ function renderBulkBar() {
       <div class="bulk-row">
         <select id="bulk-cat">${opts}</select>
         <button class="go" id="bulk-go">Assign</button>
-        <button id="bulk-clear">Uncategorize</button>
+        <button id="bulk-clear">Clear</button>
       </div>
+      ${projects.length ? `<div class="bulk-row" style="margin-top:6px">
+        <select id="bulk-prj"><option value="">no project</option>${
+          projects.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>
+        <button id="bulk-prj-go">Set project</button>
+      </div>` : ''}
     </div>`;
   document.getElementById('bulk-none').onclick = () => { picked.clear(); renderTxns(); };
   document.getElementById('bulk-go').onclick = () => doBulk(document.getElementById('bulk-cat').value);
   document.getElementById('bulk-clear').onclick = () => doBulk('');
+  const bp = document.getElementById('bulk-prj-go');
+  if (bp) bp.onclick = async () => {
+    const val = document.getElementById('bulk-prj').value;
+    const r = await post({ action:'bulkProject', transactionIds:[...picked], project: val });
+    if (r.error) { alert(r.error); return; }
+    picked.clear(); pickMode = false;
+    document.getElementById('select-toggle').textContent = 'Select multiple';
+    document.getElementById('select-all').style.display = 'none';
+    cacheBust(); loadCategorize();
+  };
 }
 
 async function doBulk(category) {
@@ -936,6 +975,106 @@ function bars(series) {
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${line}${b}</svg>`;
 }
 
+// ============ PROJECTS ============
+async function loadProjects() {
+  const el = document.getElementById('projects-body');
+  if (!cacheGet('projects')) el.innerHTML = '<div class="empty">Loading</div>';
+  await cachedLoad('projects', () => get('getProjects'), renderProjects);
+}
+
+function renderProjects(list) {
+  const el = document.getElementById('projects-body');
+  const active = (list || []).filter(p => p.status !== 'Done');
+  const done   = (list || []).filter(p => p.status === 'Done');
+
+  const card = p => {
+    const pct = p.budget > 0 ? Math.min(100, (p.spent / p.budget) * 100) : 0;
+    const over = p.budget > 0 && p.spent > p.budget;
+    return `<div class="brow" data-p="${esc(p.name)}">
+      <div class="brow-top"><span class="brow-cat">${esc(p.name)}</span>
+        <span class="brow-num"><b>${money(p.spent)}</b>${p.budget ? ' / ' + money(p.budget) : ''}</span></div>
+      ${p.budget ? `<div class="track"><div class="fill ${over ? 'over' : (pct > 85 ? 'warn':'')}"
+        style="width:${pct}%"></div></div>` : ''}
+      <div class="sb" style="margin-top:4px">${p.count} purchase${p.count === 1 ? '' : 's'}${
+        p.last ? ' · last ' + fmtDue(p.last) : ''}</div>
+    </div>`;
+  };
+
+  el.innerHTML = `
+    ${active.length ? `<div class="section-label">Active</div>
+      <div class="card tight">${active.map(card).join('')}</div>` :
+      '<div class="empty"><b>No projects yet</b>Create one, then tag purchases to it as you go.</div>'}
+    ${done.length ? `<div class="section-label">Finished</div>
+      <div class="card tight" style="opacity:.7">${done.map(card).join('')}</div>` : ''}
+    <div class="section-label">New project</div>
+    <div class="card">
+      <label>Name</label><input type="text" id="p-name" placeholder="Basement finish">
+      <label>Budget (optional)</label><input type="number" id="p-budget" placeholder="0">
+      <button class="btn ghost" id="p-add">Create project</button>
+    </div>`;
+
+  el.querySelectorAll('.brow').forEach(r => r.onclick = () => openProject(r.dataset.p));
+  document.getElementById('p-add').onclick = async () => {
+    const name = document.getElementById('p-name').value.trim();
+    const budget = Number(document.getElementById('p-budget').value) || 0;
+    if (!name) { alert('Give the project a name.'); return; }
+    const r = await post({ action:'addProject', name:name, budget:budget });
+    if (r.error) { alert(r.error); return; }
+    cacheBust();
+    loadProjects();
+  };
+}
+
+async function openProject(name) {
+  const el = document.getElementById('projects-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  const d = await get('getProjectDetail', { name: name });
+  const p = d.project || { name: name, spent: 0, budget: 0, status: 'Active' };
+  const pct = p.budget > 0 ? Math.min(100, (p.spent / p.budget) * 100) : 0;
+  const over = p.budget > 0 && p.spent > p.budget;
+
+  el.innerHTML = `
+    <span class="back" id="back-prj">← All projects</span>
+    <div class="card">
+      <div style="font-size:12.5px;color:var(--muted)">${esc(p.status)}${
+        p.first ? ' · started ' + fmtDue(p.first) : ''}</div>
+      <div style="font-size:22px;font-weight:620;letter-spacing:-.02em;margin:2px 0 4px">${money(p.spent)}</div>
+      <div style="font-size:15px;font-weight:500;margin-bottom:${p.budget ? '10px':'0'}">${esc(p.name)}
+        <span class="clear-cat" id="edit-prj">edit</span></div>
+      ${p.budget ? `<div class="track"><div class="fill ${over ? 'over' : (pct > 85 ? 'warn':'')}"
+          style="width:${pct}%"></div></div>
+        <div class="fcount" style="margin-top:6px">${
+          over ? money(p.spent - p.budget) + ' over budget' :
+                 money(p.budget - p.spent) + ' left of ' + money(p.budget)}</div>` : ''}
+    </div>
+    ${d.byCategory.length ? `<div class="section-label">By category</div>
+      <div class="card tight">${d.byCategory.map(c => `
+        <div class="lrow"><div class="nm" style="font-weight:400">${esc(c.category)}</div>
+          <div class="vl" style="font-size:14px">${money(c.spent)}</div></div>`).join('')}</div>` : ''}
+    ${d.transactions.length ? `<div class="section-label">Purchases</div>
+      <div class="card tight">${d.transactions.map(t => `
+        <div class="lrow"><div style="flex:1;min-width:0">
+          <div class="nm">${esc(t.payee)}</div>
+          <div class="sb">${fmtDue(t.date)}${t.card ? ' · ' + esc(t.card) : ''}${
+            t.category ? ' · ' + esc(t.category) : ''}</div></div>
+          <div class="vl" style="font-size:14px">${money(t.amount)}</div></div>`).join('')}</div>`
+      : '<div class="empty"><b>Nothing tagged yet</b>Assign purchases to this project from the Review tab.</div>'}
+    <div class="card"><button class="btn ghost" id="prj-done">${
+      p.status === 'Done' ? 'Reopen project' : 'Mark finished'}</button></div>`;
+
+  document.getElementById('back-prj').onclick = loadProjects;
+  document.getElementById('edit-prj').onclick = async () => {
+    const b = prompt('Budget for this project', p.budget || '');
+    if (b === null) return;
+    await post({ action:'updateProject', name:p.name, budget: b.replace(/[^0-9.]/g,'') });
+    cacheBust(); openProject(name);
+  };
+  document.getElementById('prj-done').onclick = async () => {
+    await post({ action:'updateProject', name:p.name, status: p.status === 'Done' ? 'Active' : 'Done' });
+    cacheBust(); loadProjects();
+  };
+}
+
 // ============ FINANCES ============
 async function loadFinances() {
   const el = document.getElementById('finances-body');
@@ -1290,11 +1429,9 @@ function renderAccounts(d) {
   const ruleList = (rules && rules.length)
     ? rules.map(r => `<div class="lrow">
         <div style="min-width:0;flex:1"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.example)}</div>
-        <div class="sb">${r.auto
-          ? 'files automatically · ' + r.agreed + ' of ' + r.total
-          : 'suggests only · needs ' + Math.max(0, 2 - r.total) + ' more'}</div></div>
+        <div class="sb">suggested ${r.total} time${r.total === 1 ? '' : 's'}</div></div>
         <div style="display:flex;align-items:center;gap:8px">
-          <span class="rule-cat" style="${r.auto ? '' : 'opacity:.6'}">${esc(r.category)}</span>
+          <span class="rule-cat">${esc(r.category)}</span>
           <span class="rm" data-m="${esc(r.match)}" style="color:var(--faint);cursor:pointer;font-size:17px">×</span>
         </div></div>`).join('')
     : '<div class="empty" style="padding:22px">No rules yet.</div>';
@@ -1307,16 +1444,11 @@ function renderAccounts(d) {
       <button class="btn ghost" id="connect-loan" style="margin-top:8px">Connect a loan or mortgage</button>
     </div>
 
-    <div class="section-label">Merchant memory<span id="apply-rules">apply to queue</span></div>
+    <div class="section-label">Merchant memory</div>
     <div class="card tight">${ruleList}</div>`;
 
   document.getElementById('connect').onclick = () => connectAccount('bank');
   document.getElementById('connect-loan').onclick = () => connectAccount('loan');
-  document.getElementById('apply-rules').onclick = async () => {
-    const r = await post({ action:'applyRules' });
-    alert(r.applied ? r.applied + ' transactions categorized from memory.' : 'Nothing in the queue matched a known payee.');
-    cacheBust(); loadAccounts();
-  };
   el.querySelectorAll('.rm').forEach(x => x.onclick = async () => {
     if (!confirm('Forget this merchant rule?')) return;
     await post({ action:'deleteRule', payee:x.dataset.m });
