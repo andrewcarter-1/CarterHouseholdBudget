@@ -828,21 +828,26 @@ async function loadAccounts() {
   const rules = await get('getRules');
   const institutions = await get('getInstitutions');
 
+  const consentOf = {};
+  (institutions || []).forEach(i => consentOf[i.name] = i.consented);
+
+  const reauthCell = (name) => consentOf[name]
+    ? `<span class="sb" style="flex:none;color:var(--good)">${consentOf[name].join(' · ')}</span>`
+    : `<span class="reauth" data-i="${esc(name)}"
+        style="font-size:12px;color:var(--accent);cursor:pointer;flex:none">Re-authorize</span>`;
+
   const list = (accounts && accounts.length)
     ? accounts.map(a => `<div class="lrow">
         <div style="min-width:0;flex:1"><div class="nm">${esc(a.institution)}</div>
         <div class="sb">${a.cards.map(esc).join(' · ')}</div></div>
-        <span class="reauth" data-i="${esc(a.institution)}"
-          style="font-size:12px;color:var(--accent);cursor:pointer;flex:none">Re-authorize</span>
+        ${reauthCell(a.institution)}
         </div>`).join('')
     : '<div class="empty" style="padding:22px">No accounts connected yet.</div>';
 
-  const missing = (institutions || []).filter(i => !(accounts || []).some(a => a.institution === i));
-  const missingList = missing.length
-    ? missing.map(i => `<div class="lrow"><div class="nm">${esc(i)}</div>
-        <span class="reauth" data-i="${esc(i)}"
-          style="font-size:12px;color:var(--accent);cursor:pointer">Re-authorize</span></div>`).join('')
-    : '';
+  const missing = (institutions || [])
+    .filter(i => !(accounts || []).some(a => a.institution === i.name));
+  const missingList = missing.map(i => `<div class="lrow">
+      <div class="nm" style="flex:1">${esc(i.name)}</div>${reauthCell(i.name)}</div>`).join('');
 
   const ruleList = (rules && rules.length)
     ? rules.map(r => `<div class="lrow">
@@ -882,12 +887,13 @@ async function loadAccounts() {
 async function reauth(institution, el) {
   el.textContent = 'Opening';
   const r = await post({ action:'updateLinkToken', institution: institution });
-  if (!r.link_token) { alert(r.error_message || r.error || 'Could not start.'); el.textContent = 'Re-authorize'; return; }
+  if (!r.link_token) { alert(r.error || 'Could not start.'); el.textContent = 'Re-authorize'; return; }
   Plaid.create({
     token: r.link_token,
     onSuccess: async () => {
       // Update mode keeps the existing access token. Nothing to exchange.
-      el.textContent = 'Done';
+      el.textContent = 'Saving';
+      await post({ action:'markReauthed', institution: institution, products: r.products });
       await post({ action:'forceSync' });
       loadAccounts();
     },
