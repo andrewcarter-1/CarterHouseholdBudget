@@ -212,12 +212,14 @@
   </section>
   <section class="view" id="view-budget"><div id="budget-body"></div></section>
   <section class="view" id="view-trends"><div id="trends-body"></div></section>
+  <section class="view" id="view-finances"><div id="finances-body"></div></section>
   <section class="view" id="view-accounts"><div id="accounts-body"></div></section>
 </div>
 <nav>
   <button class="active" data-v="categorize"><span class="dot">◎</span>Categorize</button>
   <button data-v="budget"><span class="dot">▤</span>Budget</button>
   <button data-v="trends"><span class="dot">◪</span>Compare</button>
+  <button data-v="finances"><span class="dot">◈</span>Finances</button>
   <button data-v="accounts"><span class="dot">⬡</span>Accounts</button>
 </nav>
 
@@ -248,6 +250,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   window.scrollTo(0,0);
   if (b.dataset.v === 'budget') loadBudget();
   if (b.dataset.v === 'trends') loadCompare();
+  if (b.dataset.v === 'finances') loadFinances();
   if (b.dataset.v === 'accounts') loadAccounts();
 });
 
@@ -272,31 +275,35 @@ const filters = { status:'todo', account:'all', month:'all', sort:'newest', sear
 let totalMatching = 0;
 
 async function loadCategorize() {
-  if (!cats.length) cats = await get('getCategories');
-  const res = await get('getTransactions', filters);
-  txns = res.rows || [];
-  totalMatching = res.total || 0;
+  const d = await get('categorizeBundle', filters);
+  cats = d.categories || [];
+  txns = d.transactions || [];
+  totalMatching = d.total || 0;
   renderTxns();
-  loadFilterOptions();
+  if (!filtersLoaded && d.filters) { fillFilterOptions(d.filters); filtersLoaded = true; }
 }
 
 let filtersLoaded = false;
-async function loadFilterOptions() {
-  if (filtersLoaded) return;
-  const o = await get('getFilterOptions');
+function fillFilterOptions(o) {
   const acc = document.getElementById('f-account');
+  const accVal = acc.value;
+  acc.innerHTML = '<option value="all">All accounts</option>';
   (o.accounts || []).forEach(a => {
     const opt = document.createElement('option');
     opt.value = a; opt.textContent = a.replace(/ · $/, '');
     acc.appendChild(opt);
   });
+  acc.value = accVal;
+
   const mon = document.getElementById('f-month');
+  const monVal = mon.value;
+  mon.innerHTML = '<option value="all">All months</option>';
   (o.months || []).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m; opt.textContent = m;
     mon.appendChild(opt);
   });
-  filtersLoaded = true;
+  mon.value = monVal;
 }
 
 document.querySelectorAll('#seg-status button').forEach(b => b.onclick = () => {
@@ -416,7 +423,13 @@ function renderTxns() {
     card.style.opacity = '.35';
     await post({ action:'saveCategory', transactionId:id, category:'' });
     trendCache = null;
-    loadCategorize();
+    const t = txns.find(y => y.transactionId === id);
+    if (filters.status === 'todo' || filters.status === 'all') {
+      if (t) { t.category = ''; t.source = ''; }
+    } else {
+      txns = txns.filter(y => y.transactionId !== id); totalMatching--;
+    }
+    renderTxns();
   });
 
   el.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
@@ -438,9 +451,11 @@ function renderTxns() {
     trendCache = null;
     card.style.opacity = '.35';
     setTimeout(() => {
-      if (filters.status === 'todo') { txns = txns.filter(t => t.transactionId !== id); totalMatching--; renderTxns(); }
-      else loadCategorize();
-    }, 220);
+      const t = txns.find(x => x.transactionId === id);
+      if (filters.status === 'todo') { txns = txns.filter(x => x.transactionId !== id); totalMatching--; }
+      else if (t) { t.category = pick; t.source = 'manual'; }
+      renderTxns();
+    }, 200);
   });
 
   el.querySelectorAll('.split-link').forEach(link => link.onclick = () => {
@@ -553,14 +568,13 @@ function openSplit(card, box) {
 async function loadBudget() {
   const el = document.getElementById('budget-body');
   el.innerHTML = '<div class="empty">Loading</div>';
-  if (!months.length) months = await get('getAvailableMonths');
-  // Current month may not have a tab yet; the backend creates it on request.
+  const d = await get('budgetBundle', { month:selMonth, year:selYear });
+  months = d.months || [];
+  const budget = d.budget, vaults = d.vaults, accts = d.byAccount;
+
   if (!months.some(m => m.month === selMonth && m.year === selYear)) {
     months = [{ month: selMonth, year: selYear, label: selMonth + ' ' + selYear }, ...months];
   }
-  const budget = await get('getBudgetSummary', { month:selMonth, year:selYear });
-  const vaults = await get('getVaults');
-  const accts  = await get('getSpendByAccount', { month:selMonth, year:selYear });
 
   const picker = `<div class="months">` + (months.length ? months.map(m =>
     `<div class="mpill ${m.month===selMonth && m.year===selYear ? 'on':''}"
@@ -820,13 +834,108 @@ function bars(series) {
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${line}${b}</svg>`;
 }
 
+// ============ FINANCES ============
+async function loadFinances() {
+  const el = document.getElementById('finances-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  const d = await get('getFinanceReview');
+
+  if (!d.groups || !d.groups.length) {
+    el.innerHTML = `<div class="empty"><b>No balances yet</b>Pull them from your banks to get started.</div>
+      <div class="card"><button class="btn" id="fin-refresh">Refresh balances</button></div>`;
+    document.getElementById('fin-refresh').onclick = doRefreshFinances;
+    return;
+  }
+
+  const t = d.totals;
+  const soon = [];
+  d.groups.forEach(g => g.accounts.forEach(a => { if (a.due) soon.push(Object.assign({ inst:g.institution }, a)); }));
+  soon.sort((a,b) => new Date(a.due) - new Date(b.due));
+
+  let html = `
+    <div class="totals">
+      <div><div class="lbl">Net worth</div>
+        <div class="val" style="color:${t.net < 0 ? 'var(--over)':'var(--text)'}">${money(t.net)}</div></div>
+      <div><div class="lbl">Owed</div>
+        <div class="val" style="color:var(--over)">${money(t.credit + t.loans)}</div></div>
+    </div>
+    <div class="card tight">
+      <div class="lrow"><div class="nm">Cash</div><div class="vl">${money(t.cash)}</div></div>
+      ${t.invest ? `<div class="lrow"><div class="nm">Investments</div><div class="vl">${money(t.invest)}</div></div>` : ''}
+      <div class="lrow"><div class="nm">Credit cards</div><div class="vl" style="color:var(--over)">${money(t.credit)}</div></div>
+      ${t.loans ? `<div class="lrow"><div class="nm">Loans</div><div class="vl" style="color:var(--over)">${money(t.loans)}</div></div>` : ''}
+    </div>`;
+
+  if (soon.length) {
+    html += `<div class="section-label">Payments due</div><div class="card tight">` +
+      soon.map(a => {
+        const days = Math.ceil((new Date(a.due + 'T12:00:00') - new Date()) / 86400000);
+        const urgent = days <= 7;
+        return `<div class="lrow">
+          <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
+            <div class="sb">${fmtDue(a.due)}${days >= 0 ? ' · ' + days + 'd' : ' · overdue'}${
+              a.minPayment ? ' · min ' + money(a.minPayment) : ''}</div></div>
+          <div class="vl" style="color:${urgent ? 'var(--over)':'var(--text)'}">${
+            a.statement != null ? money(a.statement) : money(a.balance)}</div>
+        </div>`;
+      }).join('') + `</div>`;
+  }
+
+  d.groups.forEach(g => {
+    html += `<div class="section-label">${esc(g.institution)}</div><div class="card tight">` +
+      g.accounts.map(a => {
+        const isDebt = a.type === 'credit' || a.type === 'loan';
+        const sub = [];
+        if (a.type === 'credit' && a.limit) sub.push(money(a.limit - a.balance) + ' available');
+        else if (a.available != null && a.type === 'depository') sub.push(money(a.available) + ' available');
+        if (a.apr) sub.push(a.apr + '% APR');
+        if (a.statement != null) sub.push('stmt ' + money(a.statement));
+        return `<div class="lrow acct-row" data-id="${esc(a.id)}" data-name="${esc(a.name)}">
+          <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
+            ${sub.length ? `<div class="sb">${sub.join(' · ')}</div>` : ''}</div>
+          <div class="vl" style="color:${isDebt && a.balance > 0 ? 'var(--over)':'var(--text)'}">${money(a.balance)}</div>
+        </div>`;
+      }).join('') + `</div>`;
+  });
+
+  html += `<div class="card"><button class="btn ghost" id="fin-refresh">Refresh balances</button>
+    ${d.updated ? `<div class="fcount" style="text-align:center;margin-top:8px">Updated ${fmtWhen(d.updated)}</div>` : ''}
+    </div>`;
+
+  el.innerHTML = html;
+  document.getElementById('fin-refresh').onclick = doRefreshFinances;
+  el.querySelectorAll('.acct-row').forEach(r => r.onclick = async () => {
+    const nu = prompt('Rename this account', r.dataset.name);
+    if (nu === null) return;
+    await post({ action:'renameAccount', accountId:r.dataset.id, displayName:nu.trim() });
+    filtersLoaded = false;
+    loadFinances();
+  });
+}
+
+async function doRefreshFinances() {
+  const b = document.getElementById('fin-refresh');
+  b.textContent = 'Refreshing'; b.disabled = true;
+  const r = await post({ action:'refreshFinances' });
+  if (r.errors && r.errors.length) alert('Trouble with:\n' + r.errors.join('\n'));
+  loadFinances();
+}
+
+function fmtDue(d) {
+  return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' });
+}
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' ' +
+         d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+}
+
 // ============ ACCOUNTS ============
 async function loadAccounts() {
   const el = document.getElementById('accounts-body');
   el.innerHTML = '<div class="empty">Loading</div>';
-  const accounts = await get('getAccounts');
-  const rules = await get('getRules');
-  const institutions = await get('getInstitutions');
+  const d = await get('accountsBundle');
+  const accounts = d.accounts, rules = d.rules, institutions = d.institutions;
 
   const consentOf = {};
   (institutions || []).forEach(i => consentOf[i.name] = i.consented);
@@ -864,12 +973,16 @@ async function loadAccounts() {
   el.innerHTML = `
     <div class="section-label">Connected</div>
     <div class="card tight">${list}${missingList}</div>
-    <div class="card"><button class="btn" id="connect">Connect an account</button></div>
+    <div class="card">
+      <button class="btn" id="connect">Connect a bank or card</button>
+      <button class="btn ghost" id="connect-loan" style="margin-top:8px">Connect a loan or mortgage</button>
+    </div>
 
     <div class="section-label">Merchant memory<span id="apply-rules">apply to queue</span></div>
     <div class="card tight">${ruleList}</div>`;
 
-  document.getElementById('connect').onclick = connectAccount;
+  document.getElementById('connect').onclick = () => connectAccount('bank');
+  document.getElementById('connect-loan').onclick = () => connectAccount('loan');
   document.getElementById('apply-rules').onclick = async () => {
     const r = await post({ action:'applyRules' });
     alert(r.applied ? r.applied + ' transactions categorized from memory.' : 'Nothing in the queue matched a known payee.');
@@ -901,16 +1014,18 @@ async function reauth(institution, el) {
   }).open();
 }
 
-async function connectAccount() {
-  const r = await post({ action:'createLinkToken' });
-  if (!r.link_token) { alert(r.error_message || r.error || 'Could not start Plaid.'); return; }
+async function connectAccount(kind) {
+  const r = await post({ action:'createLinkToken', kind: kind || 'bank' });
+  if (!r.link_token) { alert(r.error || 'Could not start Plaid.'); return; }
   Plaid.create({ token:r.link_token, onSuccess: async (pt) => {
-    const name = prompt('Name this institution (e.g. Chase, SoFi):');
+    const name = prompt('Name this institution (e.g. PennyMac, Chase):');
     if (!name) return;
-    const res = await post({ action:'connectAccount', publicToken:pt, accountName:name });
+    const res = await post({ action:'connectAccount', publicToken:pt, accountName:name, products:r.products });
     if (res.error) { alert(res.error); return; }
     await post({ action:'forceSync' });
-    trendCache = null; loadAccounts();
+    await post({ action:'refreshFinances' });
+    trendCache = null; filtersLoaded = false;
+    loadAccounts();
   }}).open();
 }
 
