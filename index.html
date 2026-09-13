@@ -87,9 +87,8 @@
   .lrow { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); }
   .lrow:last-child { border-bottom:none; }
   .acct-row { cursor:pointer; margin:0 -14px; padding-left:14px; padding-right:14px; position:relative; }
-  .acct-row .vl { padding-right:14px; }
-  .acct-row:after { content:'›'; position:absolute; right:2px; top:50%; transform:translateY(-52%);
-    color:var(--faint); font-size:17px; line-height:1; }
+  .acct-row .vl { padding-right:0; }
+
   .acct-row:hover { background:var(--surface-2); }
   .acct-row:active { background:var(--accent-bg); }
   .brow, .spark-row { cursor:pointer; margin:0 -14px; padding-left:14px; padding-right:26px; position:relative; }
@@ -136,7 +135,9 @@
   .split-foot button { font-size:12.5px; padding:7px 12px; border-radius:7px; cursor:pointer; font-family:inherit; border:1px solid var(--border); }
   .split-foot .add { background:var(--surface-2); color:var(--accent); }
   .split-foot .go { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .tgl { flex:none; width:40px; height:23px; border-radius:999px; background:#DDD9D2;
+  .tgl-gap { flex:none; width:40px; }
+  .vault-hint { font-size:11px; color:var(--faint); font-weight:400; }
+  .tgl { flex:none; width:40px; height:23px; margin-left:10px; border-radius:999px; background:#DDD9D2;
     position:relative; cursor:pointer; transition:background .15s; }
   .tgl.on { background:var(--good); }
   .tgl .knob { position:absolute; top:2.5px; left:2.5px; width:18px; height:18px; border-radius:50%;
@@ -1237,7 +1238,9 @@ function renderFinances(d) {
   }
 
   d.groups.forEach(g => {
-    html += `<div class="section-label">${esc(g.institution)}</div><div class="card tight">` +
+    const hasCash = g.accounts.some(a => a.type === 'depository');
+    html += `<div class="section-label">${esc(g.institution)}${
+      hasCash ? '<span class="vault-hint">vault</span>' : ''}</div><div class="card tight">` +
       g.accounts.map(a => {
         const isDebt = a.type === 'credit' || a.type === 'loan';
         const sub = [];
@@ -1249,6 +1252,9 @@ function renderFinances(d) {
           <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
             ${sub.length ? `<div class="sb">${sub.join(' · ')}</div>` : ''}</div>
           <div class="vl" style="color:${isDebt && a.balance > 0 ? 'var(--over)':'var(--text)'}">${money(a.balance)}</div>
+          ${a.type === 'depository'
+            ? `<span class="tgl ${a.role === 'Savings' ? 'on':''}" data-id="${esc(a.id)}"><span class="knob"></span></span>`
+            : '<span class="tgl-gap"></span>'}
         </div>`;
       }).join('') + `</div>`;
   });
@@ -1257,9 +1263,41 @@ function renderFinances(d) {
     ${d.updated ? `<div class="fcount" style="text-align:center;margin-top:8px">Updated ${fmtWhen(d.updated)}</div>` : ''}
     </div>`;
 
-  el.innerHTML = html;
+  el.innerHTML = html + '<div id="role-bar"></div>';
   document.getElementById('fin-refresh').onclick = doRefreshFinances;
   el.querySelectorAll('.acct-row').forEach(r => r.onclick = () => openAccount(r.dataset.id));
+
+  roleEdits = {};
+  el.querySelectorAll('.tgl').forEach(t => t.onclick = (ev) => {
+    ev.stopPropagation();                     // don't open the account
+    const on = t.classList.toggle('on');
+    roleEdits[t.dataset.id] = on ? 'Savings' : '';
+    renderRoleBar();
+  });
+}
+
+// Toggles stage until saved, because committing also retags history.
+let roleEdits = {};
+function renderRoleBar() {
+  const bar = document.getElementById('role-bar');
+  if (!bar) return;
+  const n = Object.keys(roleEdits).length;
+  if (!n) { bar.innerHTML = ''; return; }
+  bar.innerHTML = `<div class="bulk-bar">
+    <div class="bulk-head"><span>${n} account${n === 1 ? '' : 's'} changed</span>
+      <a id="role-cancel">Cancel</a></div>
+    <div class="bulk-row"><button class="go" id="role-save" style="flex:1">Save vault settings</button></div>
+  </div>`;
+  document.getElementById('role-cancel').onclick = () => { roleEdits = {}; loadFinances(); };
+  document.getElementById('role-save').onclick = async () => {
+    const btn = document.getElementById('role-save');
+    btn.textContent = 'Saving';
+    const r = await post({ action:'bulkRoles', roles: roleEdits });
+    roleEdits = {};
+    if (r.error) { alert(r.error); return; }
+    cacheBust();
+    loadFinances();
+  };
 }
 
 // ---- account detail ----
@@ -1334,14 +1372,7 @@ async function openAccount(accountId) {
   if (a.lastPayment != null && a.type !== 'loan') rows.push(['Last payment', money(a.lastPayment)]);
   rows.push(['Account', a.plaidName + (a.mask ? ' ••' + a.mask : '')]);
 
-  const roleBlock = a.type === 'depository' ? `
-    <div class="section-label">Role</div>
-    <div class="card">
-      <select id="acct-role">
-        <option value="" ${!a.role ? 'selected':''}>Normal — transactions go to the queue</option>
-        <option value="Savings" ${a.role === 'Savings' ? 'selected':''}>Savings vault — transfers ignored by the budget</option>
-      </select>
-    </div>` : '';
+
 
   // Everything else Plaid returns for this liability.
   const detailRows = a.raw ? flattenLiability(a.raw) : [];
@@ -1368,7 +1399,6 @@ async function openAccount(accountId) {
     ${paymentBlock}
     ${payoffBlock}
     ${ratioBlock}
-    ${roleBlock}
     <div class="card tight">${rows.map(r => `
       <div class="lrow"><div class="nm" style="font-weight:400">${r[0]}</div>
         <div class="vl" style="font-size:14px">${r[1]}</div></div>`).join('')}</div>
@@ -1386,11 +1416,6 @@ async function openAccount(accountId) {
     if (nu === null) return;
     await post({ action:'renameAccount', accountId:a.id, displayName:nu.trim() });
         openAccount(accountId);
-  };
-  const roleEl = document.getElementById('acct-role');
-  if (roleEl) roleEl.onchange = async () => {
-    await post({ action:'setAccountRole', accountId:a.id, role: roleEl.value });
-    cacheBust();
   };
   const sr = document.getElementById('set-ref');
   if (sr) sr.onclick = async () => {
@@ -1534,7 +1559,7 @@ function renderAccounts(d) {
   const list = (accounts && accounts.length)
     ? accounts.map(a => `<div class="lrow">
         <div style="min-width:0;flex:1"><div class="nm">${esc(a.institution)}</div>
-        <div class="sb">${a.cards.map(esc).join(' · ')}</div></div>
+        <div class="sb">${a.cards.length} account${a.cards.length === 1 ? '' : 's'}</div></div>
         ${reauthCell(a.institution)}
         </div>`).join('')
     : '<div class="empty" style="padding:22px">No accounts connected yet.</div>';
@@ -1555,15 +1580,12 @@ function renderAccounts(d) {
     : '<div class="empty" style="padding:22px">No rules yet.</div>';
 
   el.innerHTML = `
-    <div class="section-label">Connected</div>
+    <div class="section-label">Connections</div>
     <div class="card tight">${list}${missingList}</div>
     <div class="card">
       <button class="btn" id="connect">Connect a bank or card</button>
       <button class="btn ghost" id="connect-loan" style="margin-top:8px">Connect a loan or mortgage</button>
     </div>
-
-    <div class="section-label">Account roles<span id="roles-save" style="display:none">save</span></div>
-    <div class="card tight" id="roles-list"><div class="fcount" style="padding:8px 0">Loading</div></div>
 
     <div class="section-label">Merchant memory</div>
     <div class="card tight">${ruleList}</div>`;
@@ -1576,53 +1598,9 @@ function renderAccounts(d) {
     loadAccounts();
   });
   el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x, x.dataset.mode === 'accounts'));
-  loadRoles();
 }
 
 // Update mode: same Item, same token, just broader consent.
-// Every account in one list with a Savings toggle, so vaults can be set in
-// one pass instead of opening each account.
-let roleEdits = {};
-async function loadRoles() {
-  const box = document.getElementById('roles-list');
-  if (!box) return;
-  const accounts = await get('getAllAccounts');
-  roleEdits = {};
-  const cash = (accounts || []).filter(a => a.type === 'depository');
-  if (!cash.length) { box.innerHTML = '<div class="fcount" style="padding:8px 0">No cash accounts yet.</div>'; return; }
-
-  box.innerHTML = cash.map(a => `
-    <div class="lrow">
-      <div style="flex:1;min-width:0">
-        <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${
-          esc(a.display || a.plaidName)}${a.mask ? ' ••' + esc(a.mask) : ''}</div>
-        <div class="sb">${esc(a.institution)}${a.balance != null ? ' · ' + money(a.balance) : ''}</div>
-      </div>
-      <span class="tgl ${a.role === 'Savings' ? 'on':''}" data-id="${esc(a.id)}"
-        data-role="${esc(a.role || '')}"><span class="knob"></span></span>
-    </div>`).join('') +
-    `<div class="fcount" style="padding:7px 0 2px">Toggled accounts are vaults. Their transfers file as Transfer and never touch the budget.</div>`;
-
-  box.querySelectorAll('.tgl').forEach(t => t.onclick = () => {
-    const on = t.classList.toggle('on');
-    roleEdits[t.dataset.id] = on ? 'Savings' : '';
-    document.getElementById('roles-save').style.display = Object.keys(roleEdits).length ? '' : 'none';
-  });
-
-  const saveEl = document.getElementById('roles-save');
-  saveEl.style.display = 'none';
-  saveEl.onclick = async () => {
-    if (!Object.keys(roleEdits).length) return;
-    saveEl.textContent = 'saving';
-    const r = await post({ action:'bulkRoles', roles: roleEdits });
-    saveEl.textContent = 'save';
-    if (r.error) { alert(r.error); return; }
-    cacheBust();
-    alert((r.changed || 0) + ' accounts updated. ' + (r.retag || ''));
-    loadAccounts();
-  };
-}
-
 // Update mode. Same Item, same token, no new connection slot. Used both to
 // grant extra product consent and to share accounts opened after linking.
 async function reauth(institution, el, accountsOnly) {
