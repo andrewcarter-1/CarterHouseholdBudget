@@ -136,6 +136,14 @@
   .split-foot button { font-size:12.5px; padding:7px 12px; border-radius:7px; cursor:pointer; font-family:inherit; border:1px solid var(--border); }
   .split-foot .add { background:var(--surface-2); color:var(--accent); }
   .split-foot .go { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .tgl { flex:none; width:40px; height:23px; border-radius:999px; background:#DDD9D2;
+    position:relative; cursor:pointer; transition:background .15s; }
+  .tgl.on { background:var(--good); }
+  .tgl .knob { position:absolute; top:2.5px; left:2.5px; width:18px; height:18px; border-radius:50%;
+    background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2); transition:left .15s; }
+  .tgl.on .knob { left:19.5px; }
+  .section-label span { cursor:pointer; }
+
   .rule-cat { font-size:12.5px; color:var(--accent); background:var(--accent-bg); padding:3px 8px; border-radius:6px; }
 
   /* filter bar */
@@ -265,7 +273,14 @@ async function get(action, params = {}) {
   Object.entries(params).forEach(([k,v]) => u.searchParams.set(k, v));
   return (await fetch(u)).json();
 }
-async function post(body) { return (await fetch(API,{method:'POST',body:JSON.stringify(body)})).json(); }
+async function post(body) {
+  const r = await (await fetch(API, { method:'POST', body: JSON.stringify(body) })).json();
+  // An unrouted action used to fail silently. Now it says so.
+  if (r && typeof r.error === 'string' && r.error.indexOf('Unknown action') === 0) {
+    alert(r.error + '\n\nThe deployed script is out of date. Redeploy a new version.');
+  }
+  return r;
+}
 
 // ---------- cache ----------
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
@@ -1547,6 +1562,9 @@ function renderAccounts(d) {
       <button class="btn ghost" id="connect-loan" style="margin-top:8px">Connect a loan or mortgage</button>
     </div>
 
+    <div class="section-label">Account roles<span id="roles-save" style="display:none">save</span></div>
+    <div class="card tight" id="roles-list"><div class="fcount" style="padding:8px 0">Loading</div></div>
+
     <div class="section-label">Merchant memory</div>
     <div class="card tight">${ruleList}</div>`;
 
@@ -1558,9 +1576,53 @@ function renderAccounts(d) {
     loadAccounts();
   });
   el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x, x.dataset.mode === 'accounts'));
+  loadRoles();
 }
 
 // Update mode: same Item, same token, just broader consent.
+// Every account in one list with a Savings toggle, so vaults can be set in
+// one pass instead of opening each account.
+let roleEdits = {};
+async function loadRoles() {
+  const box = document.getElementById('roles-list');
+  if (!box) return;
+  const accounts = await get('getAllAccounts');
+  roleEdits = {};
+  const cash = (accounts || []).filter(a => a.type === 'depository');
+  if (!cash.length) { box.innerHTML = '<div class="fcount" style="padding:8px 0">No cash accounts yet.</div>'; return; }
+
+  box.innerHTML = cash.map(a => `
+    <div class="lrow">
+      <div style="flex:1;min-width:0">
+        <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${
+          esc(a.display || a.plaidName)}${a.mask ? ' ••' + esc(a.mask) : ''}</div>
+        <div class="sb">${esc(a.institution)}${a.balance != null ? ' · ' + money(a.balance) : ''}</div>
+      </div>
+      <span class="tgl ${a.role === 'Savings' ? 'on':''}" data-id="${esc(a.id)}"
+        data-role="${esc(a.role || '')}"><span class="knob"></span></span>
+    </div>`).join('') +
+    `<div class="fcount" style="padding:7px 0 2px">Toggled accounts are vaults. Their transfers file as Transfer and never touch the budget.</div>`;
+
+  box.querySelectorAll('.tgl').forEach(t => t.onclick = () => {
+    const on = t.classList.toggle('on');
+    roleEdits[t.dataset.id] = on ? 'Savings' : '';
+    document.getElementById('roles-save').style.display = Object.keys(roleEdits).length ? '' : 'none';
+  });
+
+  const saveEl = document.getElementById('roles-save');
+  saveEl.style.display = 'none';
+  saveEl.onclick = async () => {
+    if (!Object.keys(roleEdits).length) return;
+    saveEl.textContent = 'saving';
+    const r = await post({ action:'bulkRoles', roles: roleEdits });
+    saveEl.textContent = 'save';
+    if (r.error) { alert(r.error); return; }
+    cacheBust();
+    alert((r.changed || 0) + ' accounts updated. ' + (r.retag || ''));
+    loadAccounts();
+  };
+}
+
 // Update mode. Same Item, same token, no new connection slot. Used both to
 // grant extra product consent and to share accounts opened after linking.
 async function reauth(institution, el, accountsOnly) {
