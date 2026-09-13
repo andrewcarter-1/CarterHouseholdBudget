@@ -74,10 +74,27 @@
 
   .mrow { display:flex; align-items:center; gap:6px; padding:7px 0; border-bottom:1px solid var(--border); }
   .mrow:last-child { border-bottom:none; }
-  .mv { color:var(--accent); cursor:pointer; font-size:15px; padding:0 3px; flex:none; user-select:none; }
+  .grip { color:var(--faint); cursor:grab; font-size:15px; padding:2px 6px 2px 0; flex:none;
+    user-select:none; touch-action:none; letter-spacing:-1px; }
+  .grip:active { cursor:grabbing; }
+  .mrow { background:var(--surface); transition:background .2s; }
+  .mrow.dragging { position:relative; z-index:5; background:var(--accent-bg);
+    box-shadow:0 3px 12px rgba(0,0,0,.12); border-radius:8px; }
+  .mrow.dragging .grip { color:var(--accent); }
+  .mrow.just-moved { background:var(--good-bg); }
   .mname { flex:1; font-size:13.5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .mamt { width:82px; margin:0; padding:6px 8px; font-size:13px; text-align:right; flex:none; }
+  .mtype { width:92px; margin:0; padding:6px 6px; font-size:12px; flex:none; }
+  .mamt { width:76px; margin:0; padding:6px 8px; font-size:13px; text-align:right; flex:none; }
   .mdel { color:var(--faint); cursor:pointer; font-size:17px; padding:0 3px; flex:none; }
+
+  .flow { display:flex; align-items:baseline; padding:7px 0; border-bottom:1px solid var(--border); }
+  .flow:last-child { border-bottom:none; }
+  .flow .fl { flex:1; font-size:14px; }
+  .flow .fv { width:96px; text-align:right; font-size:14px; font-variant-numeric:tabular-nums; }
+  .flow-head { border-bottom:1px solid var(--border); padding-bottom:5px; }
+  .flow-head .fv { font-size:11.5px; color:var(--muted); }
+  .flow-total { border-top:1.5px solid var(--text); border-bottom:none; margin-top:3px; padding-top:9px; }
+  .flow-total .fl, .flow-total .fv { font-weight:640; font-size:15px; }
 
   .totals { display:flex; gap:10px; }
   .totals > div { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:12px 13px; }
@@ -266,6 +283,7 @@ let selMonth = now.toLocaleString('en-US', { month: 'long' });
 let selYear  = now.getFullYear();
 
 const money = n => '$' + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signed = n => (Number(n) < 0 ? '−' : '') + money(n);
 const moneyShort = n => '$' + Math.round(Math.abs(Number(n) || 0)).toLocaleString();
 const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
@@ -634,6 +652,68 @@ function commitCard(card) {
     .finally(() => { inFlight--; cacheBust(); });
 }
 
+// Drag to reorder. Pointer events rather than HTML5 drag and drop, which
+// does not fire on touch devices.
+function enableDrag(container) {
+  if (!container) return;
+  let row = null, rows = [], startY = 0, offset = 0, moved = false;
+
+  container.querySelectorAll('.grip').forEach(grip => {
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      row = grip.closest('.mrow');
+      rows = [...container.querySelectorAll('.mrow')];
+      startY = e.clientY;
+      offset = 0; moved = false;
+      row.classList.add('dragging');
+      grip.setPointerCapture(e.pointerId);
+    });
+
+    grip.addEventListener('pointermove', (e) => {
+      if (!row) return;
+      offset = e.clientY - startY;
+      row.style.transform = 'translateY(' + offset + 'px)';
+      if (Math.abs(offset) > 4) moved = true;
+
+      const box = row.getBoundingClientRect();
+      const mid = box.top + box.height / 2;
+      const others = rows.filter(r => r !== row);
+
+      for (const other of others) {
+        const b = other.getBoundingClientRect();
+        const otherMid = b.top + b.height / 2;
+        if (offset < 0 && mid < otherMid && other.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) {
+          other.parentNode.insertBefore(row, other);
+          startY = e.clientY; offset = 0; row.style.transform = '';
+          break;
+        }
+        if (offset > 0 && mid > otherMid && other.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING) {
+          other.parentNode.insertBefore(row, other.nextSibling);
+          startY = e.clientY; offset = 0; row.style.transform = '';
+          break;
+        }
+      }
+    });
+
+    const finish = async () => {
+      if (!row) return;
+      row.classList.remove('dragging');
+      row.style.transform = '';
+      const dragged = row;
+      row = null;
+      if (!moved) return;
+      const names = [...container.querySelectorAll('.mrow')].map(r => r.dataset.cat);
+      dragged.classList.add('just-moved');
+      setTimeout(() => dragged.classList.remove('just-moved'), 500);
+      const res = await post({ action:'setCategoryOrder', names: names });
+      if (res.error) { alert(res.error); loadBudget(); return; }
+      cacheBust();
+    };
+    grip.addEventListener('pointerup', finish);
+    grip.addEventListener('pointercancel', finish);
+  });
+}
+
 function renderBulkBar() {
   const bar = document.getElementById('bulk-bar');
   if (!pickMode || !picked.size) { bar.innerHTML = ''; return; }
@@ -779,37 +859,64 @@ function renderBudgetBundle(d) {
   const incBud = income.reduce((s,b) => s + b.budgeted, 0);
   const incGot = income.reduce((s,b) => s + b.spent, 0);
 
+  const expBud = expenses.reduce((s,b) => s + b.budgeted, 0);
+  const expAct = expenses.reduce((s,b) => s + b.spent, 0);
+  const savBud = savings.reduce((s,b) => s + b.budgeted, 0);
+  const savAct = savings.reduce((s,b) => s + b.spent, 0);
+  const planned = incBud - expBud - savBud;
+  const actual  = incGot - expAct - savAct;
+
+  const flowRow = (label, bud, act, bold) => `
+    <div class="flow ${bold ? 'flow-total':''}">
+      <span class="fl">${label}</span>
+      <span class="fv">${signed(bud)}</span>
+      <span class="fv">${signed(act)}</span>
+    </div>`;
+
   let html = picker + `
     <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
       <span id="manage-toggle" style="font-size:12.5px;color:var(--accent);cursor:pointer">${
         manageMode ? 'Done' : 'Reorder & edit'}</span>
     </div>
-    <div class="totals">
-      <div><div class="lbl">Spent</div><div class="val">${money(tSpent)}</div></div>
-      <div><div class="lbl">${left < 0 ? 'Over by':'Left'}</div>
-        <div class="val" style="color:${left < 0 ? 'var(--over)':'var(--good)'}">${money(left)}</div></div>
+    <div class="card">
+      <div class="flow flow-head"><span class="fl"></span><span class="fv">Budget</span><span class="fv">Actual</span></div>
+      ${flowRow('Income', incBud, incGot)}
+      ${flowRow('Expenses', -expBud, -expAct)}
+      ${flowRow('Savings', -savBud, -savAct)}
+      <div class="flow flow-total">
+        <span class="fl">Remaining</span>
+        <span class="fv" style="color:${planned < 0 ? 'var(--over)':'var(--text)'}">${signed(planned)}</span>
+        <span class="fv" style="color:${actual < 0 ? 'var(--over)':'var(--good)'}">${signed(actual)}</span>
+      </div>
     </div>
-    <div class="card">${donut(expenses)}</div>
-    ${income.length ? `<div class="section-label">Income</div>
+    ${manageMode ? '' : `<div class="card">${donut(expenses)}</div>`}`;
+
+  if (manageMode) {
+    // One list, so a category can be dragged past a section boundary and
+    // switched between Expense, Savings and Income in the same pass.
+    html += `<div class="section-label">All categories</div>
+      <div class="card tight" id="manage-list">${budget.map(row).join('')}</div>`;
+  } else {
+    if (income.length) html += `<div class="section-label">Income</div>
       <div class="card tight">${income.map(incomeRow).join('')}
         ${incBud ? `<div class="fcount" style="padding:6px 0">${
           money(incGot)} received of ${money(incBud)} expected${
           incGot >= incBud ? '' : ' · ' + money(incBud - incGot) + ' to come'}</div>` : ''}
-      </div>` : ''}
-    <div class="section-label">Spending</div>
-    <div class="card tight">${expenses.map(row).join('')}</div>`;
+      </div>`;
+    html += `<div class="section-label">Spending</div>
+      <div class="card tight">${expenses.map(row).join('')}</div>`;
+    if (savings.length) html += `<div class="section-label">Savings contributions</div>
+      <div class="card tight">${savings.map(row).join('')}</div>`;
+  }
 
-  if (savings.length) html += `<div class="section-label">Savings contributions</div>
-    <div class="card tight">${savings.map(row).join('')}</div>`;
-
-  if (vaults && vaults.length) html += `<div class="section-label">Envelope balances</div>
+  if (!manageMode && vaults && vaults.length) html += `<div class="section-label">Envelope balances</div>
     <div class="card tight">` + vaults.map(v => `
       <div class="lrow"><div><div class="nm">${esc(v.name)}</div>
         <div class="sb">${money(v.contributed)} in · ${money(v.spent)} spent</div></div>
         <div class="vl" style="color:var(--good)">${money(v.balance)}</div></div>`).join('') + `</div>
 `;
 
-  if (accts && accts.length) html += `<div class="section-label">By card</div>
+  if (!manageMode && accts && accts.length) html += `<div class="section-label">By card</div>
     <div class="card tight">` + accts.map(a => `
       <div class="lrow"><div><div class="nm">${esc(a.card)}</div>
         <div class="sb">${esc(a.institution)}</div></div>
@@ -835,11 +942,7 @@ function renderBudgetBundle(d) {
   el.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
   document.getElementById('c-add').onclick = addCategory;
 
-  el.querySelectorAll('.mv').forEach(x => x.onclick = async () => {
-    const name = x.closest('.mrow').dataset.cat;
-    await post({ action:'reorderCategory', name:name, direction:x.dataset.d });
-    cacheBust(); loadBudget();
-  });
+  if (manageMode) enableDrag(document.getElementById('manage-list'));
   el.querySelectorAll('.mamt').forEach(inp => inp.onchange = async () => {
     const name = inp.closest('.mrow').dataset.cat;
     const amt = Number(inp.value) || 0;
@@ -847,6 +950,11 @@ function renderBudgetBundle(d) {
     await post({ action:'updateBudget', month:selMonth, year:selYear, category:name, amount:amt });
     await post({ action:'updateCategory', name:name, budget:amt });
     cacheBust();
+  });
+  el.querySelectorAll('.mtype').forEach(sel => sel.onchange = async () => {
+    const name = sel.closest('.mrow').dataset.cat;
+    await post({ action:'updateCategory', name:name, type: sel.value });
+    cacheBust(); loadBudget();
   });
   el.querySelectorAll('.mdel').forEach(x => x.onclick = async () => {
     const name = x.closest('.mrow').dataset.cat;
@@ -881,8 +989,13 @@ function row(b) {
 
   if (manageMode) {
     return `<div class="mrow" data-cat="${esc(b.category)}">
-      <span class="mv" data-d="up">↑</span><span class="mv" data-d="down">↓</span>
+      <span class="grip">⠿</span>
       <span class="mname">${esc(b.category)}</span>
+      <select class="mtype">
+        <option value="Expense" ${b.type === 'Expense' ? 'selected':''}>Expense</option>
+        <option value="Savings" ${b.type === 'Savings' ? 'selected':''}>Savings</option>
+        <option value="Income"  ${b.type === 'Income'  ? 'selected':''}>Income</option>
+      </select>
       <input class="mamt" type="number" value="${b.budgeted || ''}" placeholder="0">
       <span class="mdel">×</span>
     </div>`;
