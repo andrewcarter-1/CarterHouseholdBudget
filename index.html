@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Carter Budget</title>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<meta name="theme-color" content="#EDF0FA">
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
   :root {
@@ -394,8 +403,11 @@ const now = new Date();
 let selMonth = now.toLocaleString('en-US', { month: 'long' });
 let selYear  = now.getFullYear();
 
-const money = n => '$' + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const signed = n => (Number(n) < 0 ? '−' : '') + money(n);
+// Round to cents before anything reads the sign, otherwise a residual like
+// -0.004 renders as "−$0.00".
+const cents = n => { const v = Math.round((Number(n) || 0) * 100) / 100; return v === 0 ? 0 : v; };
+const money = n => '$' + Math.abs(cents(n)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signed = n => (cents(n) < 0 ? '−' : '') + money(n);
 
 // Colours are handed out by position rather than hashed from the name, so
 // neighbours in a list and neighbouring slices in the donut never collide.
@@ -419,7 +431,7 @@ function catColor(name) {
   for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
   return CAT_COLORS[h % CAT_COLORS.length];
 }
-const moneyShort = n => '$' + Math.round(Math.abs(Number(n) || 0)).toLocaleString();
+const moneyShort = n => '$' + Math.round(Math.abs(cents(n))).toLocaleString();
 const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
 async function get(action, params = {}) {
