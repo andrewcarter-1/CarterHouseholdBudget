@@ -448,7 +448,7 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const APP_VERSION = '2026.09.13l';
+const APP_VERSION = '2026.09.13n';
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 // No expiry. Cached data always paints immediately and a background refresh
@@ -508,6 +508,9 @@ function prefetch() {
 const tabStacks = {};
 let currentTab = 'categorize';
 let suppressPop = 0;      // popstate events we fired ourselves
+let liveScrollY = 0;      // iOS restores its own scroll on back; this undoes it
+let pendingY = null;      // scroll to apply once a multi-level unwind settles
+window.addEventListener('scroll', () => { liveScrollY = window.scrollY; }, { passive: true });
 
 function stackFor(tab) {
   if (!tabStacks[tab]) tabStacks[tab] = [{ restore: null, y: 0 }];
@@ -517,12 +520,14 @@ function topFrame(tab) { const f = stackFor(tab); return f[f.length - 1]; }
 
 // Restoring waits two frames so the cached render has laid the page out.
 // Scrolling before that gets clamped, because the page is still short.
-function restoreFrame(frame) {
+function restoreFrame(frame, skipScroll) {
   const rootLoad = { budget:loadBudget, projects:loadProjects,
                      finances:loadFinances, accounts:loadAccounts,
                      categorize:loadCategorize };
   const fn = frame.restore || rootLoad[currentTab];
-  Promise.resolve(fn && fn()).then(() =>
+  const done = Promise.resolve(fn && fn());
+  if (skipScroll) return done;
+  return done.then(() =>
     requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, frame.y || 0))));
 }
 
@@ -545,9 +550,13 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
       // gestures do nothing visible while walking out of the app.
       const levels = f.length - 1;
       f.length = 1;
+      // history.go fires one popstate per entry, asynchronously, and iOS
+      // restores its own scroll on each. Render now, but hold the scroll
+      // until that unwinding has finished or it gets overwritten.
+      pendingY = f[0].y || 0;
       suppressPop = levels;
       history.go(-levels);
-      restoreFrame(f[0]);
+      restoreFrame(f[0], true);
     } else {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1404,11 +1413,26 @@ history.pushState({ guard: true }, '');
 window.addEventListener('popstate', () => {
   if (suppressPop > 0) {
     suppressPop--;
-    if (suppressPop === 0) history.pushState({ guard: true }, '');
+    if (suppressPop === 0) {
+      history.pushState({ guard: true }, '');
+      if (pendingY !== null) {
+        const y = pendingY; pendingY = null;
+        window.scrollTo(0, y);
+        requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
+      }
+    }
     return;
   }
-  popDrill();
+  // A back at a tab's root has nowhere to go. iOS still restores the scroll
+  // position stored on the entry it landed on, ignoring scrollRestoration,
+  // so put the page back where it actually was.
+  const held = liveScrollY;
+  const moved = popDrill();
   history.pushState({ guard: true }, '');
+  if (!moved) {
+    window.scrollTo(0, held);
+    requestAnimationFrame(() => window.scrollTo(0, held));
+  }
 });
 
 // ============ TRENDS (opened from a budget category) ============
