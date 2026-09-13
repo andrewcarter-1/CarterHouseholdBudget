@@ -247,6 +247,9 @@
       </div>
       <div class="frow" style="margin-top:6px">
         <select id="f-month"><option value="all">All months</option></select>
+        <select id="f-category"><option value="all">All categories</option></select>
+      </div>
+      <div class="frow" style="margin-top:6px">
         <input type="text" id="f-search" placeholder="Search payee">
       </div>
       <div class="fcount" id="f-count"></div>
@@ -398,7 +401,7 @@ document.getElementById('sync-btn').onclick = async () => {
 };
 
 // ============ CATEGORIZE ============
-const filters = { status:'todo', account:'all', month:'all', sort:'newest', search:'' };
+const filters = { status:'todo', account:'all', month:'all', category:'all', sort:'newest', search:'' };
 let totalMatching = 0;
 
 async function loadCategorize() {
@@ -410,6 +413,7 @@ async function loadCategorize() {
     totalMatching = d.total || 0;
     renderTxns();
     if (d.filters) fillFilterOptions(d.filters);
+    fillCategoryFilter();
   });
   prefetch();
 }
@@ -440,7 +444,7 @@ document.querySelectorAll('#seg-status button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#seg-status button').forEach(x => x.classList.remove('on'));
   b.classList.add('on'); filters.status = b.dataset.s; loadCategorize();
 });
-['f-account','f-sort','f-month'].forEach(id =>
+['f-account','f-sort','f-month','f-category'].forEach(id =>
   document.getElementById(id).onchange = e => {
     filters[id.replace('f-','') === 'account' ? 'account' : id.replace('f-','')] = e.target.value;
     loadCategorize();
@@ -822,6 +826,15 @@ function openSplit(card, box) {
   };
 }
 
+function fillCategoryFilter() {
+  const sel = document.getElementById('f-category');
+  if (!sel || !cats.length) return;
+  const keep = sel.value;
+  sel.innerHTML = '<option value="all">All categories</option>' +
+    cats.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  sel.value = keep || 'all';
+}
+
 // ============ BUDGET (month picker) ============
 async function loadBudget() {
   const el = document.getElementById('budget-body');
@@ -939,7 +952,7 @@ function renderBudgetBundle(d) {
   el.innerHTML = html;
   bindPicker();
   document.getElementById('manage-toggle').onclick = () => { manageMode = !manageMode; loadBudget(); };
-  el.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
+  el.querySelectorAll('.brow').forEach(r => r.onclick = () => openCategoryMonth(r.dataset.cat, selMonth, selYear));
   document.getElementById('c-add').onclick = addCategory;
 
   if (manageMode) enableDrag(document.getElementById('manage-list'));
@@ -1041,6 +1054,57 @@ async function addCategory() {
   const r = await post({ action:'addCategory', category:name, defaultAmount:amt, type:type });
   if (r.error) { alert(r.error); return; }
   cats = await get('getCategories'); cacheBust(); loadBudget();
+}
+
+// What actually makes up a category's number for one month.
+async function openCategoryMonth(category, month, year) {
+  showView('budget');
+  const el = document.getElementById('budget-body');
+  el.innerHTML = '<div class="empty">Loading</div>';
+  const d = await get('getCategoryMonth', { category: category, month: month, year: year });
+
+  const pct = d.budgeted > 0 ? Math.min(100, (d.spent / d.budgeted) * 100) : 0;
+  const over = d.budgeted > 0 && d.spent > d.budgeted;
+  const isIncome = d.type === 'Income';
+
+  el.innerHTML = `
+    <span class="back" id="back-cat">← ${esc(month)} ${year}</span>
+    <div class="card">
+      <div style="font-size:12.5px;color:var(--muted)">${esc(month)} ${year}${
+        d.type !== 'Expense' ? ' · ' + esc(d.type) : ''}</div>
+      <div style="font-size:22px;font-weight:620;letter-spacing:-.02em;margin:2px 0 4px">${money(d.spent)}</div>
+      <div style="font-size:15px;font-weight:500;margin-bottom:${d.budgeted ? '10px':'0'}">${esc(category)}</div>
+      ${d.budgeted ? `<div class="track"><div class="fill ${over ? 'over' : (pct > 85 ? 'warn':'')}"
+          style="width:${pct}%"></div></div>
+        <div class="fcount" style="margin-top:6px">${
+          isIncome
+            ? money(d.spent) + ' of ' + money(d.budgeted) + ' expected'
+            : (over ? money(d.spent - d.budgeted) + ' over ' + money(d.budgeted)
+                    : money(d.budgeted - d.spent) + ' left of ' + money(d.budgeted))}</div>` : ''}
+    </div>
+    ${d.transactions.length ? `<div class="section-label">${d.transactions.length} transaction${
+      d.transactions.length === 1 ? '' : 's'}</div>
+      <div class="card tight">${d.transactions.map(t => `
+        <div class="lrow"><div style="flex:1;min-width:0">
+          <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.payee)}</div>
+          <div class="sb">${fmtDue(t.date)}${t.card ? ' · ' + esc(t.card) : ''}${
+            t.project ? ' · ' + esc(t.project) : ''}</div></div>
+          <div class="vl" style="font-size:14px;color:${t.amount > 0 ? 'var(--good)':'var(--text)'}">${
+            t.amount > 0 ? '+' : ''}${money(t.amount)}</div></div>`).join('')}</div>`
+      : '<div class="empty"><b>Nothing here yet</b>No transactions in this category for this month.</div>'}
+    <div class="card"><button class="btn ghost" id="cat-trend">See the last 6 months</button></div>`;
+
+  document.getElementById('back-cat').onclick = loadBudget;
+  document.getElementById('cat-trend').onclick = () => openTrend(category);
+}
+
+function showView(name) {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const btn = document.querySelector('nav button[data-v="' + name + '"]');
+  if (btn) btn.classList.add('active');
+  document.getElementById('view-' + name).classList.add('active');
+  window.scrollTo(0, 0);
 }
 
 // ============ COMPARE (all months, all categories) ============
@@ -1163,10 +1227,15 @@ async function openTrend(category) {
     </div>
     ${advice}
     <div class="card tight">${series.map(s => `
-      <div class="lrow"><div class="nm">${s.label}</div>
+      <div class="lrow acct-row" data-m="${esc(s.month || '')}" data-y="${s.year || ''}">
+        <div class="nm">${esc(s.label)}</div>
         <div class="vl" style="color:${s.budgeted && s.spent > s.budgeted ? 'var(--over)':'var(--text)'}">
           ${money(s.spent)}${s.budgeted ? ' <span style="color:var(--faint);font-weight:400">/ ' + money(s.budgeted) + '</span>':''}
         </div></div>`).join('')}</div>`;
+
+  el.querySelectorAll('.acct-row').forEach(r => r.onclick = () => {
+    if (r.dataset.m) openCategoryMonth(category, r.dataset.m, Number(r.dataset.y));
+  });
   document.getElementById('back').onclick = loadCompare;
 }
 
