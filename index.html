@@ -72,6 +72,13 @@
   .fill.warn { background:var(--warn); }
   .fill.over { background:var(--over); }
 
+  .mrow { display:flex; align-items:center; gap:6px; padding:7px 0; border-bottom:1px solid var(--border); }
+  .mrow:last-child { border-bottom:none; }
+  .mv { color:var(--accent); cursor:pointer; font-size:15px; padding:0 3px; flex:none; user-select:none; }
+  .mname { flex:1; font-size:13.5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mamt { width:82px; margin:0; padding:6px 8px; font-size:13px; text-align:right; flex:none; }
+  .mdel { color:var(--faint); cursor:pointer; font-size:17px; padding:0 3px; flex:none; }
+
   .totals { display:flex; gap:10px; }
   .totals > div { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:12px 13px; }
   .totals .lbl { font-size:11.5px; color:var(--muted); }
@@ -244,6 +251,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbxcRTPMFiNWlMFH_Fr0z-Ys3fG7KQwR-J6-QHotqbILfrZWIl5qCA1IRoUtsA7fC5U/exec';
 
 let cats = [], txns = [], months = [], projects = [];
+let manageMode = false;
 const now = new Date();
 let selMonth = now.toLocaleString('en-US', { month: 'long' });
 let selYear  = now.getFullYear();
@@ -756,6 +764,10 @@ function renderBudgetBundle(d) {
   const incGot = income.reduce((s,b) => s + b.spent, 0);
 
   let html = picker + `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <span id="manage-toggle" style="font-size:12.5px;color:var(--accent);cursor:pointer">${
+        manageMode ? 'Done' : 'Reorder & edit'}</span>
+    </div>
     <div class="totals">
       <div><div class="lbl">Spent</div><div class="val">${money(tSpent)}</div></div>
       <div><div class="lbl">${left < 0 ? 'Over by':'Left'}</div>
@@ -803,8 +815,34 @@ function renderBudgetBundle(d) {
 
   el.innerHTML = html;
   bindPicker();
+  document.getElementById('manage-toggle').onclick = () => { manageMode = !manageMode; loadBudget(); };
   el.querySelectorAll('.brow').forEach(r => r.onclick = () => openTrend(r.dataset.cat));
   document.getElementById('c-add').onclick = addCategory;
+
+  el.querySelectorAll('.mv').forEach(x => x.onclick = async () => {
+    const name = x.closest('.mrow').dataset.cat;
+    await post({ action:'reorderCategory', name:name, direction:x.dataset.d });
+    cacheBust(); loadBudget();
+  });
+  el.querySelectorAll('.mamt').forEach(inp => inp.onchange = async () => {
+    const name = inp.closest('.mrow').dataset.cat;
+    const amt = Number(inp.value) || 0;
+    // Update this month and the default that future months inherit.
+    await post({ action:'updateBudget', month:selMonth, year:selYear, category:name, amount:amt });
+    await post({ action:'updateCategory', name:name, budget:amt });
+    cacheBust();
+  });
+  el.querySelectorAll('.mdel').forEach(x => x.onclick = async () => {
+    const name = x.closest('.mrow').dataset.cat;
+    if (!confirm('Remove ' + name + ' from the budget?')) return;
+    const r = await post({ action:'deleteCategory', name:name });
+    if (r.error) {
+      if (confirm(r.error + '\n\nRemove it from just this month instead?')) {
+        await post({ action:'removeFromMonth', month:selMonth, year:selYear, name:name });
+      } else return;
+    }
+    cacheBust(); loadBudget();
+  });
 }
 
 function bindPicker() {
@@ -824,6 +862,16 @@ function incomeRow(b) {
 function row(b) {
   const pct = b.budgeted > 0 ? Math.min(100, (b.spent / b.budgeted) * 100) : 0;
   const cls = b.budgeted > 0 && b.spent > b.budgeted ? 'over' : (pct > 85 ? 'warn' : '');
+
+  if (manageMode) {
+    return `<div class="mrow" data-cat="${esc(b.category)}">
+      <span class="mv" data-d="up">↑</span><span class="mv" data-d="down">↓</span>
+      <span class="mname">${esc(b.category)}</span>
+      <input class="mamt" type="number" value="${b.budgeted || ''}" placeholder="0">
+      <span class="mdel">×</span>
+    </div>`;
+  }
+
   return `<div class="brow" data-cat="${esc(b.category)}">
     <div class="brow-top"><span class="brow-cat">${esc(b.category)}</span>
       <span class="brow-num"><b>${money(b.spent)}</b> / ${money(b.budgeted)}</span></div>
@@ -1271,6 +1319,15 @@ async function openAccount(accountId) {
   if (a.lastPayment != null && a.type !== 'loan') rows.push(['Last payment', money(a.lastPayment)]);
   rows.push(['Account', a.plaidName + (a.mask ? ' ••' + a.mask : '')]);
 
+  const roleBlock = a.type === 'depository' ? `
+    <div class="section-label">Role</div>
+    <div class="card">
+      <select id="acct-role">
+        <option value="" ${!a.role ? 'selected':''}>Normal — transactions go to the queue</option>
+        <option value="Savings" ${a.role === 'Savings' ? 'selected':''}>Savings vault — transfers ignored by the budget</option>
+      </select>
+    </div>` : '';
+
   // Everything else Plaid returns for this liability.
   const detailRows = a.raw ? flattenLiability(a.raw) : [];
 
@@ -1296,6 +1353,7 @@ async function openAccount(accountId) {
     ${paymentBlock}
     ${payoffBlock}
     ${ratioBlock}
+    ${roleBlock}
     <div class="card tight">${rows.map(r => `
       <div class="lrow"><div class="nm" style="font-weight:400">${r[0]}</div>
         <div class="vl" style="font-size:14px">${r[1]}</div></div>`).join('')}</div>
@@ -1313,6 +1371,11 @@ async function openAccount(accountId) {
     if (nu === null) return;
     await post({ action:'renameAccount', accountId:a.id, displayName:nu.trim() });
         openAccount(accountId);
+  };
+  const roleEl = document.getElementById('acct-role');
+  if (roleEl) roleEl.onchange = async () => {
+    await post({ action:'setAccountRole', accountId:a.id, role: roleEl.value });
+    cacheBust();
   };
   const sr = document.getElementById('set-ref');
   if (sr) sr.onclick = async () => {
