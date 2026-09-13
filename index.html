@@ -13,6 +13,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Budget">
 <meta name="theme-color" content="#EDF0FA">
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
   :root {
@@ -395,7 +397,7 @@
   <button data-v="budget"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 13h8M8 17h5"/></svg>Budget</button>
   <button data-v="projects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects</button>
   <button data-v="finances"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M5 10v9h14v-9"/><path d="M9 19v-5h6v5"/></svg>Finances</button>
-  <button data-v="accounts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10.5h19"/></svg>Accounts</button>
+  <button data-v="accounts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
 </nav>
 
 <script>
@@ -456,15 +458,16 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const CACHE_TTL = 10 * 60 * 1000;
+const APP_VERSION = '2026.09.13';
 
+// No expiry. Cached data always paints immediately and a background refresh
+// corrects it if anything changed, so a long session never hits a moment
+// where the app stops to reload.
 function cacheGet(key) {
   try {
     const raw = localStorage.getItem(CACHE_PREFIX + key);
     if (!raw) return null;
-    const o = JSON.parse(raw);
-    if (Date.now() - o.t > CACHE_TTL) return null;
-    return o.v;
+    return JSON.parse(raw).v;
   } catch (e) { return null; }
 }
 function cacheSet(key, val) {
@@ -479,15 +482,20 @@ function cacheBust(prefix) {
   } catch (e) {}
 }
 
-// Renders from cache if present, then fetches and re-renders only if the
-// data actually changed. render() is called with the payload.
+// Paint from cache, then quietly refresh. The view is only redrawn if the
+// fresh payload differs, so nothing flickers and scroll position holds.
 async function cachedLoad(key, fetcher, render) {
   const hit = cacheGet(key);
   if (hit) render(hit, true);
-  const fresh = await fetcher();
-  cacheSet(key, fresh);
-  if (!hit || JSON.stringify(hit) !== JSON.stringify(fresh)) render(fresh, false);
-  return fresh;
+  try {
+    const fresh = await fetcher();
+    cacheSet(key, fresh);
+    if (!hit || JSON.stringify(hit) !== JSON.stringify(fresh)) render(fresh, false);
+    return fresh;
+  } catch (err) {
+    if (!hit) throw err;     // nothing cached to fall back on
+    return hit;
+  }
 }
 
 // Quietly warms the other tabs so switching feels instant.
@@ -1892,6 +1900,13 @@ function renderAccounts(d) {
       <button class="btn ghost" id="connect-loan" style="margin-top:8px">Connect a loan or mortgage</button>
     </div>
 
+    <div class="section-label">App</div>
+    <div class="card tight">
+      <div class="lrow"><div><div class="nm">Version</div>
+        <div class="sb">${APP_VERSION}</div></div>
+        <span id="hard-reload" style="font-size:12.5px;color:var(--accent);cursor:pointer;font-weight:600">Reload</span></div>
+    </div>
+
     <div class="section-label">Merchant memory</div>
     <div class="card tight">${ruleList}</div>`;
 
@@ -1903,6 +1918,15 @@ function renderAccounts(d) {
     loadAccounts();
   });
   el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x, x.dataset.mode === 'accounts'));
+
+  document.getElementById('hard-reload').onclick = () => {
+    cacheBust();
+    // A changing query string is the only reliable way to get iOS to fetch
+    // a fresh copy of the page rather than serving its saved one.
+    const u = new URL(location.href);
+    u.searchParams.set('v', Date.now());
+    location.replace(u.toString());
+  };
 }
 
 // Update mode: same Item, same token, just broader consent.
