@@ -331,18 +331,6 @@
   .unlink { color:var(--faint); cursor:pointer; font-size:16px; padding:0 2px 0 10px; flex:none; }
   .vault-hint { font-size:10.5px; color:var(--faint); font-weight:600; text-transform:none; letter-spacing:0; }
 
-  /* sparkline rows */
-  .spark-row { display:flex; align-items:center; gap:12px; padding:11px 0;
-    border-bottom:1px solid var(--border); cursor:pointer;
-    margin:0 -16px; padding-left:16px; padding-right:16px; }
-  .spark-row:last-child { border-bottom:none; }
-  .spark-row:hover { background:var(--surface-2); }
-  .spark-name { flex:1; min-width:0; }
-  .spark-name .n { font-size:13.5px; font-weight:650; white-space:nowrap; overflow:hidden;
-    text-overflow:ellipsis; letter-spacing:-.012em; display:flex; align-items:center; }
-  .spark-name .d { font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums; }
-  .spark-name .d.bad { color:var(--over); }
-
   .rule-cat { font-size:12px; color:var(--accent); background:var(--accent-bg);
     padding:4px 10px; border-radius:999px; font-weight:600; }
   svg text { font-family:inherit; }
@@ -458,7 +446,7 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const APP_VERSION = '2026.09.13';
+const APP_VERSION = '2026.09.13b';
 
 // No expiry. Cached data always paints immediately and a background refresh
 // corrects it if anything changed, so a long session never hits a moment
@@ -1299,19 +1287,6 @@ function showView(name) {
 }
 
 // ============ TRENDS (opened from a budget category) ============
-function sparkline(data, color) {
-  const W = 76, H = 26;
-  const max = Math.max(...data.map(d => Math.max(d.spent, d.budgeted || 0)), 1);
-  const bw = W / data.length;
-  const bars = data.map((d,i) => {
-    const h = (d.spent / max) * (H - 4);
-    const over = d.budgeted && d.spent > d.budgeted;
-    return `<rect x="${i*bw+1}" y="${H-h}" width="${bw-2}" height="${Math.max(h,1)}" rx="2"
-      fill="${over ? '#E5484D' : (color || '#2A79D4')}" opacity="${i===data.length-1 ? 1 : .45}"/>`;
-  }).join('');
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="flex:none">${bars}</svg>`;
-}
-
 async function openTrend(category) {
   showView('budget');
   const el = document.getElementById('budget-body');
@@ -1686,8 +1661,6 @@ async function openAccount(accountId) {
   if (a.apr) rows.push(['APR', a.apr + '%']);
   if (a.lastPayment != null && a.type !== 'loan') rows.push(['Last payment', money(a.lastPayment)]);
   rows.push(['Account', a.plaidName + (a.mask ? ' ••' + a.mask : '')]);
-
-
 
   // Everything else Plaid returns for this liability.
   const detailRows = a.raw ? flattenLiability(a.raw) : [];
