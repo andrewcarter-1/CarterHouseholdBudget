@@ -446,7 +446,8 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const APP_VERSION = '2026.09.13c';
+const APP_VERSION = '2026.09.13e';
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 // No expiry. Cached data always paints immediately and a background refresh
 // corrects it if anything changed, so a long session never hits a moment
@@ -498,33 +499,52 @@ function prefetch() {
   }, 400);
 }
 
-// Each tab keeps its own scroll position. Tapping the tab you are already on
-// jumps back to the top, the way a native app behaves.
-const scrollPos = {};
+// Each tab keeps its own navigation stack, the way a native tab bar does.
+// Switching tabs leaves the other tab where you left it, however many
+// screens deep. Tapping the tab you are on pops back to its root; tapping
+// again scrolls that root to the top.
+const tabStacks = {};
 let currentTab = 'categorize';
+
+function stackFor(tab) {
+  if (!tabStacks[tab]) tabStacks[tab] = [{ restore: null, y: 0 }];
+  return tabStacks[tab];
+}
+function topFrame(tab) { const f = stackFor(tab); return f[f.length - 1]; }
+
+// Restoring waits two frames so the cached render has laid the page out.
+// Scrolling before that gets clamped, because the page is still short.
+function restoreFrame(frame) {
+  const rootLoad = { budget:loadBudget, projects:loadProjects,
+                     finances:loadFinances, accounts:loadAccounts,
+                     categorize:loadCategorize };
+  const fn = frame.restore || rootLoad[currentTab];
+  Promise.resolve(fn && fn()).then(() =>
+    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, frame.y || 0))));
+}
+
+function paintTab(tab) {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const btn = document.querySelector('nav button[data-v="' + tab + '"]');
+  if (btn) btn.classList.add('active');
+  document.getElementById('view-' + tab).classList.add('active');
+}
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   const target = b.dataset.v;
 
-  if (target === currentTab) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  if (target === currentTab) {
+    const f = stackFor(currentTab);
+    if (f.length > 1) { f.length = 1; restoreFrame(f[0]); }   // pop to this tab's root
+    else window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
 
-  scrollPos[currentTab] = window.scrollY;
+  topFrame(currentTab).y = window.scrollY;
   currentTab = target;
-
-  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  b.classList.add('active');
-  document.getElementById('view-' + target).classList.add('active');
-
-  if (target === 'budget') loadBudget();
-  if (target === 'projects') loadProjects();
-  if (target === 'finances') loadFinances();
-  if (target === 'accounts') loadAccounts();
-
-  // Wait for the cached render to lay out before restoring, otherwise the
-  // page is still short and the scroll gets clamped to the top.
-  const y = scrollPos[target] || 0;
-  requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
+  paintTab(target);
+  restoreFrame(topFrame(target));
 });
 
 // Desktop shortcut: Enter commits whichever card has a selection,
@@ -1249,7 +1269,8 @@ async function addCategory() {
 }
 
 // What actually makes up a category's number for one month.
-async function openCategoryMonth(category, month, year) {
+async function openCategoryMonth(category, month, year, fromHistory) {
+  if (!fromHistory) pushDrill(() => openCategoryMonth(category, month, year, true));
   showView('budget');
   const el = document.getElementById('budget-body');
   el.innerHTML = '<div class="empty">Loading</div>';
@@ -1290,23 +1311,38 @@ async function openCategoryMonth(category, month, year) {
       : '<div class="empty"><b>Nothing here yet</b>No transactions in this category for this month.</div>'}
     <div class="card"><button class="btn ghost" id="cat-trend">See the last 6 months</button></div>`;
 
-  document.getElementById('back-cat').onclick = loadBudget;
+  document.getElementById('back-cat').onclick = () => history.back();
   document.getElementById('cat-trend').onclick = () => openTrend(category);
 }
 
 function showView(name) {
-  if (name !== currentTab) { scrollPos[currentTab] = window.scrollY; currentTab = name; }
-  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  const btn = document.querySelector('nav button[data-v="' + name + '"]');
-  if (btn) btn.classList.add('active');
-  document.getElementById('view-' + name).classList.add('active');
-  window.scrollTo(0, 0);      // a drill-in always starts at the top
-  scrollPos[name] = 0;
+  if (name !== currentTab) { topFrame(currentTab).y = window.scrollY; currentTab = name; }
+  paintTab(name);
 }
 
+// ---------- drill-in navigation ----------
+// Opening a detail view records where the list was and pushes a history
+// entry, so the back gesture and the in-app back link behave identically.
+function pushDrill(restore) {
+  const f = stackFor(currentTab);
+  f[f.length - 1].y = window.scrollY;
+  f.push({ restore: restore, y: 0 });
+  history.pushState({ tab: currentTab, depth: f.length }, '');
+}
+
+function popDrill() {
+  const f = stackFor(currentTab);
+  if (f.length <= 1) return false;
+  f.pop();
+  restoreFrame(f[f.length - 1]);
+  return true;
+}
+
+window.addEventListener('popstate', () => { popDrill(); });
+
 // ============ TRENDS (opened from a budget category) ============
-async function openTrend(category) {
+async function openTrend(category, fromHistory) {
+  if (!fromHistory) pushDrill(() => openTrend(category, true));
   showView('budget');
   const el = document.getElementById('budget-body');
   el.innerHTML = '<div class="empty">Loading</div>';
@@ -1345,7 +1381,7 @@ async function openTrend(category) {
   el.querySelectorAll('.acct-row').forEach(r => r.onclick = () => {
     if (r.dataset.m) openCategoryMonth(category, r.dataset.m, Number(r.dataset.y));
   });
-  document.getElementById('back').onclick = loadBudget;
+  document.getElementById('back').onclick = () => history.back();
 }
 
 function bars(series, category) {
@@ -1420,7 +1456,8 @@ function renderProjects(list) {
   };
 }
 
-async function openProject(name) {
+async function openProject(name, fromHistory) {
+  if (!fromHistory) pushDrill(() => openProject(name, true));
   const el = document.getElementById('projects-body');
   el.innerHTML = '<div class="empty">Loading</div>';
   const d = await get('getProjectDetail', { name: name });
@@ -1461,7 +1498,7 @@ async function openProject(name) {
     <div class="card"><button class="btn ghost" id="prj-done">${
       p.status === 'Done' ? 'Reopen project' : 'Mark finished'}</button></div>`;
 
-  document.getElementById('back-prj').onclick = loadProjects;
+  document.getElementById('back-prj').onclick = () => history.back();
   document.getElementById('edit-prj').onclick = async () => {
     const b = prompt('Budget for this project', p.budget || '');
     if (b === null) return;
@@ -1610,7 +1647,8 @@ function renderRoleBar() {
 }
 
 // ---- account detail ----
-async function openAccount(accountId) {
+async function openAccount(accountId, fromHistory) {
+  if (!fromHistory) pushDrill(() => openAccount(accountId, true));
   const el = document.getElementById('finances-body');
   el.innerHTML = '<div class="empty">Loading</div>';
   const a = await get('getAccountDetail', { accountId: accountId });
@@ -1715,7 +1753,7 @@ async function openAccount(accountId) {
       : (isDebt ? `<div class="card"><div style="font-size:13px;color:var(--muted)">
           No detail stored yet. Tap Refresh balances on the accounts list to pull it.</div></div>` : '')}`;
 
-  document.getElementById('back-fin').onclick = loadFinances;
+  document.getElementById('back-fin').onclick = () => history.back();
   document.getElementById('rename-acct').onclick = async (ev) => {
     ev.stopPropagation();
     const nu = prompt('Rename this account', a.name);
