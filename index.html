@@ -448,7 +448,7 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const APP_VERSION = '2026.09.13n';
+const APP_VERSION = '2026.09.13o';
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 // No expiry. Cached data always paints immediately and a background refresh
@@ -507,9 +507,7 @@ function prefetch() {
 // again scrolls that root to the top.
 const tabStacks = {};
 let currentTab = 'categorize';
-let suppressPop = 0;      // popstate events we fired ourselves
 let liveScrollY = 0;      // iOS restores its own scroll on back; this undoes it
-let pendingY = null;      // scroll to apply once a multi-level unwind settles
 window.addEventListener('scroll', () => { liveScrollY = window.scrollY; }, { passive: true });
 
 function stackFor(tab) {
@@ -520,15 +518,32 @@ function topFrame(tab) { const f = stackFor(tab); return f[f.length - 1]; }
 
 // Restoring waits two frames so the cached render has laid the page out.
 // Scrolling before that gets clamped, because the page is still short.
-function restoreFrame(frame, skipScroll) {
-  const rootLoad = { budget:loadBudget, projects:loadProjects,
-                     finances:loadFinances, accounts:loadAccounts,
-                     categorize:loadCategorize };
-  const fn = frame.restore || rootLoad[currentTab];
-  const done = Promise.resolve(fn && fn());
-  if (skipScroll) return done;
-  return done.then(() =>
-    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, frame.y || 0))));
+const ROOT_LOAD = { budget:loadBudget, projects:loadProjects, finances:loadFinances,
+                    accounts:loadAccounts, categorize:loadCategorize };
+const VIEW_BODY = { budget:'budget-body', projects:'projects-body', finances:'finances-body',
+                    accounts:'accounts-body', categorize:'txn-list' };
+
+function bodyEl(tab) { return document.getElementById(VIEW_BODY[tab]); }
+
+// Going back paints the markup the screen had when you left it, straight
+// away, then re-runs its loader underneath to rebind handlers and pick up
+// anything that changed. The loader renders the same content from cache, so
+// the swap is invisible and the scroll never jumps.
+function restoreFrame(frame) {
+  const el = bodyEl(currentTab);
+  const y = frame.y || 0;
+
+  if (frame.html && el) {
+    el.innerHTML = frame.html;
+    window.scrollTo(0, y);
+  }
+
+  const fn = frame.restore || ROOT_LOAD[currentTab];
+  return Promise.resolve(fn && fn()).then(() => {
+    requestAnimationFrame(() => {
+      if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y);
+    });
+  });
 }
 
 function paintTab(tab) {
@@ -545,25 +560,21 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   if (target === currentTab) {
     const f = stackFor(currentTab);
     if (f.length > 1) {
-      // Same as swiping back however many levels deep you are: unwind the
-      // browser history too, or those entries linger and later back
-      // gestures do nothing visible while walking out of the app.
-      const levels = f.length - 1;
+      // Drop straight to this tab's root. The spare history entries left
+      // behind get absorbed by the root-level back handler, so there is no
+      // need to unwind them here and no async popstate to wait on.
       f.length = 1;
-      // history.go fires one popstate per entry, asynchronously, and iOS
-      // restores its own scroll on each. Render now, but hold the scroll
-      // until that unwinding has finished or it gets overwritten.
-      pendingY = f[0].y || 0;
-      suppressPop = levels;
-      history.go(-levels);
-      restoreFrame(f[0], true);
+      restoreFrame(f[0]);
     } else {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
     return;
   }
 
-  topFrame(currentTab).y = window.scrollY;
+  const leaving = topFrame(currentTab);
+  leaving.y = window.scrollY;
+  const leavingEl = bodyEl(currentTab);
+  if (leavingEl) leaving.html = leavingEl.innerHTML;
   currentTab = target;
   paintTab(target);
   restoreFrame(topFrame(target));
@@ -1347,7 +1358,10 @@ function showView(name) {
 // entry, so the back gesture and the in-app back link behave identically.
 function pushDrill(restore) {
   const f = stackFor(currentTab);
-  f[f.length - 1].y = window.scrollY;
+  const top = f[f.length - 1];
+  top.y = window.scrollY;
+  const el = bodyEl(currentTab);
+  top.html = el ? el.innerHTML : null;     // snapshot so going back is instant
   f.push({ restore: restore, y: 0 });
   history.pushState({ tab: currentTab, depth: f.length }, '');
 }
@@ -1403,26 +1417,11 @@ function popDrill() {
 history.replaceState({ root: true }, '');
 history.pushState({ guard: true }, '');
 
-// history.go() fires one popstate per entry it unwinds. Those are ours and
-// the view is already restored, so swallow them.
-//
 // Every completed back ends with a pushState. That re-arms the guard and,
 // because pushing truncates anything ahead of the current entry, it also
 // kills the forward gesture. Swiping forward would otherwise re-enter a
 // screen you just dismissed while the app's own stack had moved on.
 window.addEventListener('popstate', () => {
-  if (suppressPop > 0) {
-    suppressPop--;
-    if (suppressPop === 0) {
-      history.pushState({ guard: true }, '');
-      if (pendingY !== null) {
-        const y = pendingY; pendingY = null;
-        window.scrollTo(0, y);
-        requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
-      }
-    }
-    return;
-  }
   // A back at a tab's root has nowhere to go. iOS still restores the scroll
   // position stored on the entry it landed on, ignoring scrollRestoration,
   // so put the page back where it actually was.
