@@ -52,6 +52,8 @@
     --shadow-hero: 0 10px 28px rgba(37,68,132,.26);
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { overscroll-behavior-x:none; }
+  #app { touch-action:pan-y; }
   body {
     margin:0; background:var(--bg); color:var(--text); font-size:15px; line-height:1.45;
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,sans-serif;
@@ -446,7 +448,7 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const APP_VERSION = '2026.09.13e';
+const APP_VERSION = '2026.09.13l';
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 // No expiry. Cached data always paints immediately and a background refresh
@@ -505,6 +507,7 @@ function prefetch() {
 // again scrolls that root to the top.
 const tabStacks = {};
 let currentTab = 'categorize';
+let suppressPop = 0;      // popstate events we fired ourselves
 
 function stackFor(tab) {
   if (!tabStacks[tab]) tabStacks[tab] = [{ restore: null, y: 0 }];
@@ -536,8 +539,18 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 
   if (target === currentTab) {
     const f = stackFor(currentTab);
-    if (f.length > 1) { f.length = 1; restoreFrame(f[0]); }   // pop to this tab's root
-    else window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (f.length > 1) {
+      // Same as swiping back however many levels deep you are: unwind the
+      // browser history too, or those entries linger and later back
+      // gestures do nothing visible while walking out of the app.
+      const levels = f.length - 1;
+      f.length = 1;
+      suppressPop = levels;
+      history.go(-levels);
+      restoreFrame(f[0]);
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     return;
   }
 
@@ -1338,7 +1351,65 @@ function popDrill() {
   return true;
 }
 
-window.addEventListener('popstate', () => { popDrill(); });
+// Edge swipes that lead nowhere are blocked so iOS never animates them.
+// The forward gesture never leads anywhere, so the right edge is always
+// blocked. The back gesture only leads somewhere inside a detail view, so
+// the left edge is blocked while the tab sits at its root and left alone
+// once you are a level deep.
+//
+// The block releases as soon as the finger moves vertically, so a diagonal
+// or changed-mind drag scrolls the page instead of freezing it, the way iOS
+// treats a horizontal gesture on a page with nowhere to go.
+(function () {
+  const EDGE = 24, DECIDE = 6, RELEASE = 20;
+  let tracking = false, decided = false, blocking = false, x0 = 0, y0 = 0;
+
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    const t = e.touches[0];
+    x0 = t.clientX; y0 = t.clientY;
+    const atRight = x0 > window.innerWidth - EDGE;
+    const atLeft  = x0 < EDGE && stackFor(currentTab).length <= 1;   // nothing to go back to
+    tracking = atRight || atLeft;
+    decided = false; blocking = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!tracking || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - x0), dy = Math.abs(t.clientY - y0);
+
+    if (!decided && (dx > DECIDE || dy > DECIDE)) { decided = true; blocking = dx > dy; }
+    if (!blocking) return;
+    if (dy > RELEASE) { blocking = false; return; }   // they want to scroll
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => { tracking = false; }, { passive: true });
+})();
+
+// A spare history entry sits under the app so a back gesture at a tab's
+// root is absorbed rather than closing the app. It re-arms every time it
+// gets consumed.
+history.replaceState({ root: true }, '');
+history.pushState({ guard: true }, '');
+
+// history.go() fires one popstate per entry it unwinds. Those are ours and
+// the view is already restored, so swallow them.
+//
+// Every completed back ends with a pushState. That re-arms the guard and,
+// because pushing truncates anything ahead of the current entry, it also
+// kills the forward gesture. Swiping forward would otherwise re-enter a
+// screen you just dismissed while the app's own stack had moved on.
+window.addEventListener('popstate', () => {
+  if (suppressPop > 0) {
+    suppressPop--;
+    if (suppressPop === 0) history.pushState({ guard: true }, '');
+    return;
+  }
+  popDrill();
+  history.pushState({ guard: true }, '');
+});
 
 // ============ TRENDS (opened from a budget category) ============
 async function openTrend(category, fromHistory) {
