@@ -7,7 +7,7 @@
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
   :root {
-    --bg:        #F4F6FB;
+    --bg:        #EDF0FA;
     --surface:   #FFFFFF;
     --surface-2: #F7F9FC;
     --border:    #E8ECF4;
@@ -1512,13 +1512,14 @@ function renderFinances(d) {
         // is shown inside the account.
         const owed = a.statement != null ? a.statement
                    : (a.lastPayment != null ? a.lastPayment : a.scheduled);
+        const nothingOwed = owed == null || cents(owed) === 0;
         const sub = [fmtDue(a.due)];
         sub.push(days >= 0 ? 'in ' + days + 'd' : Math.abs(days) + 'd ago');
         if (a.type === 'loan' && a.scheduled != null) sub.push('P&I ' + money(a.scheduled));
         return `<div class="lrow acct-row" data-id="${esc(a.id)}">
           <div style="flex:1;min-width:0"><div class="nm">${esc(a.name)}</div>
             <div class="sb">${sub.join(' · ')}</div></div>
-          <div class="vl" style="color:${urgent ? 'var(--over)':'var(--text)'}">${
+          <div class="vl" style="color:${nothingOwed ? 'var(--text)' : (urgent ? 'var(--over)':'var(--text)')}">${
             owed != null ? money(owed) : '—'}</div>
         </div>`;
       }).join('') + `</div>`;
