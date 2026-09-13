@@ -446,7 +446,7 @@ async function post(body) {
 // Tabs render from cache instantly, then quietly refresh behind the scenes.
 // Anything that writes to the sheet clears it.
 const CACHE_PREFIX = 'cbudget:';
-const APP_VERSION = '2026.09.13b';
+const APP_VERSION = '2026.09.13c';
 
 // No expiry. Cached data always paints immediately and a background refresh
 // corrects it if anything changed, so a long session never hits a moment
@@ -498,16 +498,33 @@ function prefetch() {
   }, 400);
 }
 
+// Each tab keeps its own scroll position. Tapping the tab you are already on
+// jumps back to the top, the way a native app behaves.
+const scrollPos = {};
+let currentTab = 'categorize';
+
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  const target = b.dataset.v;
+
+  if (target === currentTab) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+
+  scrollPos[currentTab] = window.scrollY;
+  currentTab = target;
+
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   b.classList.add('active');
-  document.getElementById('view-' + b.dataset.v).classList.add('active');
-  window.scrollTo(0,0);
-  if (b.dataset.v === 'budget') loadBudget();
-  if (b.dataset.v === 'projects') loadProjects();
-  if (b.dataset.v === 'finances') loadFinances();
-  if (b.dataset.v === 'accounts') loadAccounts();
+  document.getElementById('view-' + target).classList.add('active');
+
+  if (target === 'budget') loadBudget();
+  if (target === 'projects') loadProjects();
+  if (target === 'finances') loadFinances();
+  if (target === 'accounts') loadAccounts();
+
+  // Wait for the cached render to lay out before restoring, otherwise the
+  // page is still short and the scroll gets clamped to the top.
+  const y = scrollPos[target] || 0;
+  requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
 });
 
 // Desktop shortcut: Enter commits whichever card has a selection,
@@ -1278,12 +1295,14 @@ async function openCategoryMonth(category, month, year) {
 }
 
 function showView(name) {
+  if (name !== currentTab) { scrollPos[currentTab] = window.scrollY; currentTab = name; }
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   const btn = document.querySelector('nav button[data-v="' + name + '"]');
   if (btn) btn.classList.add('active');
   document.getElementById('view-' + name).classList.add('active');
-  window.scrollTo(0, 0);
+  window.scrollTo(0, 0);      // a drill-in always starts at the top
+  scrollPos[name] = 0;
 }
 
 // ============ TRENDS (opened from a budget category) ============
@@ -1880,14 +1899,24 @@ function renderAccounts(d) {
         <span id="hard-reload" style="font-size:12.5px;color:var(--accent);cursor:pointer;font-weight:600">Reload</span></div>
     </div>
 
-    <div class="section-label">Merchant memory</div>
-    <div class="card tight">${ruleList}</div>`;
+    <div class="section-label">Merchant memory<span id="rules-toggle">${
+      rules && rules.length ? rules.length + ' saved' : 'none yet'}</span></div>
+    <div class="card tight" id="rules-card" style="display:none">${ruleList}</div>`;
 
   document.getElementById('connect').onclick = () => connectAccount('bank');
   document.getElementById('connect-loan').onclick = () => connectAccount('loan');
+  const rt = document.getElementById('rules-toggle');
+  rt.onclick = () => {
+    const box = document.getElementById('rules-card');
+    const open = box.style.display !== 'none';
+    box.style.display = open ? 'none' : '';
+    rt.textContent = open ? ((rules && rules.length ? rules.length + ' saved' : 'none yet')) : 'hide';
+  };
+
   el.querySelectorAll('.rm').forEach(x => x.onclick = async () => {
     if (!confirm('Forget this merchant rule?')) return;
     await post({ action:'deleteRule', payee:x.dataset.m });
+    cacheBust();
     loadAccounts();
   });
   el.querySelectorAll('.reauth').forEach(x => x.onclick = () => reauth(x.dataset.i, x, x.dataset.mode === 'accounts'));
